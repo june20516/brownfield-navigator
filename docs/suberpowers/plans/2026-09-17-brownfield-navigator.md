@@ -28,6 +28,7 @@
 | `.claude-plugin/marketplace.json` | 레포를 마켓플레이스로 등록 |
 | `README.md` | 설치, 처음 설정, 프로필 형식, 수동 호출, 주의 사항 (한국어) |
 | `README.en.md` | `README.md`의 영어판 |
+| `.gitattributes` | bash가 읽는 파일과 마크다운의 LF 줄바꿈 고정 |
 | `plugins/brownfield-navigator/.claude-plugin/plugin.json` | 플러그인 매니페스트 |
 | `plugins/brownfield-navigator/lib/profile.sh` | 조직·프로젝트 파일 frontmatter 파싱, 참고 파일 description 추출 |
 | `plugins/brownfield-navigator/lib/match.sh` | remote URL 정규화, 경로(상위 디렉터리 포함)와 remote 매칭, 매칭 근거 출력 |
@@ -2456,11 +2457,12 @@ EOF
 
 ---
 
-### Task 11: README (한국어, 영어)
+### Task 11: README (한국어, 영어)와 줄바꿈 속성
 
 **Files:**
 - Create: `README.md`
 - Create: `README.en.md`
+- Create: `.gitattributes`
 
 - [ ] **Step 1: 한국어 README 작성**
 
@@ -2535,7 +2537,7 @@ match-paths:
 
 - `apply`: `auto`(규칙 주입), `suggest`(한 줄 안내만), `off`(주입 안 함). 생략하면 `auto`이고, 프로젝트 파일에서 생략하면 조직 값을 따릅니다
 - `match-remotes`: git remote URL과 비교하는 bash glob입니다. URL 끝의 `/`와 `.git`, `https://user:token@host` 형식의 인증 정보는 떼고 비교합니다
-- `match-paths`: 작업 디렉터리나 그 상위 디렉터리와 비교하는 bash glob입니다. 앞머리 `~`는 홈으로 확장합니다. git을 쓰지 않는다면 이 조건을 씁니다
+- `match-paths`: 작업 디렉터리나 그 상위 디렉터리와 비교하는 bash glob입니다. 앞머리 `~`는 홈으로 확장하고, 심볼릭 링크를 따라간 실제 경로와 비교합니다. 비교는 바이트 단위라 `?`와 `[...]`는 한글 한 글자에 맞지 않으니 한글이 들어간 자리에는 `*`를 씁니다. git을 쓰지 않는다면 이 조건을 씁니다
 - 리스트는 블록 형식만 지원합니다. `["a", "b"]` 형식은 파싱 실패로 무시되고 경고가 남습니다
 - 조직 이름은 `orgs/` 아래 디렉터리 이름, 프로젝트 이름은 파일 이름입니다
 
@@ -2544,6 +2546,7 @@ match-paths:
 - `## [id] 제목`부터 다음 `## ` 헤딩 전까지가 규칙 하나입니다. id는 소문자, 숫자, `-`만 씁니다
 - 같은 id는 대체, 새 id는 추가입니다. 코어 규칙의 id는 `skills/brownfield-navigator/SKILL.md`에서 확인합니다
 - id가 없는 `## ` 섹션은 설명으로 보고 병합하지 않습니다
+- 규칙을 끄려면 섹션을 지웁니다. HTML 주석(`<!-- -->`)으로 감싸도 규칙으로 읽힙니다
 
 ### 개인 프로필
 
@@ -2561,7 +2564,7 @@ match-paths:
 /brownfield-navigator:brownfield-navigator
 ```
 
-병합 결과를 직접 확인하려면 `compose-guide`를 실행합니다.
+어떤 규칙이 적용되는지 보려면 세션에서 이 스킬로 가이드를 불러 달라고 하면 됩니다. Claude가 병합 결과와 경고를 보여 줍니다. 이 레포를 받아 두었다면 스크립트를 직접 실행해도 됩니다.
 
 ```bash
 plugins/brownfield-navigator/bin/compose-guide --manual ~/work/your-org/your-repo
@@ -2572,6 +2575,7 @@ plugins/brownfield-navigator/bin/compose-guide --manual ~/work/your-org/your-rep
 - 프로필은 `~/.claude/brownfield-navigator/`에 있는 사용자 파일입니다. 플러그인을 업데이트해도 지워지지 않지만, 다른 기기에서 쓰려면 따로 백업하거나 동기화해야 합니다. 위치는 환경변수 `BROWNFIELD_NAVIGATOR_HOME`으로 바꿀 수 있습니다
 - 서브에이전트는 세션 시작 주입을 받지 않습니다. 코어 규칙 `[delegate-with-guide]`에 따라 Claude가 관련 규칙을 위임 프롬프트에 함께 적습니다
 - 한 레포에 `auto` 조직이 둘 이상 매칭되면 이름순 첫 조직만 적용하고 경고합니다
+- Claude Code는 훅 출력을 10,000자로 제한합니다. 그래서 세션에 주입하는 가이드에는 코어 규칙의 핵심 문단만 넣고(전문은 SKILL.md), 조직·개인·프로젝트 규칙은 전문을 넣습니다. 합쳐서 9,000자를 넘으면 가이드 맨 위에 저장된 전체 파일을 읽으라는 안내가 붙습니다. 조직 규칙이 길어지면 긴 설명은 참고 파일(`references/`)로 옮기세요
 
 ## 개발
 
@@ -2657,7 +2661,7 @@ Write commit messages as `type: description TICKET-123`.
 
 - `apply`: `auto` (inject rules), `suggest` (one-line hint only), or `off` (inject nothing). It defaults to `auto`, and a project file without it uses the organization's value
 - `match-remotes`: bash globs compared with git remote URLs. A trailing `/`, a trailing `.git`, and credentials such as `https://user:token@host` are removed before comparing
-- `match-paths`: bash globs compared with the working directory or any of its parent directories. A leading `~` expands to your home directory. Use this condition if you don't use git
+- `match-paths`: bash globs compared with the working directory or any of its parent directories. A leading `~` expands to your home directory, and the comparison uses the real path with symbolic links resolved. Matching is byte-wise, so `?` and `[...]` do not match a single non-ASCII character such as a Korean syllable; use `*` there. Use this condition if you don't use git
 - Lists must use block style. Flow style such as `["a", "b"]` fails to parse, and the file is skipped with a warning
 - The organization name is the directory name under `orgs/`, and the project name is the file name
 
@@ -2666,6 +2670,7 @@ Write commit messages as `type: description TICKET-123`.
 - A rule runs from `## [id] title` to the next `## ` heading. Ids use lowercase letters, digits, and `-`
 - A section with the same id replaces the earlier one, and a new id is added. The core rule ids are in `skills/brownfield-navigator/SKILL.md`
 - `## ` sections without an id are treated as descriptions and are not merged
+- To turn a rule off, delete its section. Wrapping it in an HTML comment (`<!-- -->`) does not disable it
 
 ### Personal profile
 
@@ -2683,7 +2688,7 @@ Invoke the skill if you started the session in a directory that spans several re
 /brownfield-navigator:brownfield-navigator
 ```
 
-To inspect the merged result directly, run `compose-guide`.
+To see which rules apply, ask Claude in a session to load the guide with this skill; it shows the merged result and any warnings. If you have cloned this repository, you can also run the script directly.
 
 ```bash
 plugins/brownfield-navigator/bin/compose-guide --manual ~/work/your-org/your-repo
@@ -2694,6 +2699,7 @@ plugins/brownfield-navigator/bin/compose-guide --manual ~/work/your-org/your-rep
 - Profiles are your own files in `~/.claude/brownfield-navigator/`. Plugin updates don't remove them, but to use them on another machine you need to back them up or sync them yourself. Set the `BROWNFIELD_NAVIGATOR_HOME` environment variable to use a different location
 - Subagents don't receive the session-start injection. Following the core rule `[delegate-with-guide]`, Claude includes the relevant rules in its delegation prompts
 - If two or more `auto` organizations match one repository, only the first one by name is applied, with a warning
+- Claude Code caps hook output at 10,000 characters. The injected guide therefore contains only the key paragraph of each core rule (the full text stays in SKILL.md) and the full text of organization, personal, and project rules. If the total exceeds 9,000 characters, a notice at the top of the guide tells Claude to read the saved full file. When organization rules grow long, move the detailed explanations into reference files (`references/`)
 
 ## Development
 
@@ -2704,17 +2710,33 @@ claude --plugin-dir plugins/brownfield-navigator
 ```
 ````
 
-- [ ] **Step 3: 전체 테스트와 검증**
+- [ ] **Step 3: 줄바꿈 속성 작성**
 
-실행: `bash plugins/brownfield-navigator/tests/run-all.sh; echo "exit=$?"; claude plugin validate . && claude plugin validate plugins/brownfield-navigator`
-기대: 테스트 파일 6개 모두 `0개 실패`, 마지막 줄 `테스트 파일 6개 모두 통과`, `exit=0`, 검증 두 번 모두 `✔ Validation passed`
+Windows에서 `core.autocrlf`로 받아도 bash가 읽는 파일이 CRLF로 바뀌지 않게 한다. `run-hook.cmd`는 Windows에서 cmd.exe가 실행하므로 지정하지 않는다.
 
-- [ ] **Step 4: Commit**
+`.gitattributes`
+
+````gitattributes
+# Windows에서 core.autocrlf로 받아도 bash가 읽는 파일은 LF 줄바꿈을 유지
+# (CRLF면 스크립트가 실행되지 않고, 규칙 제목 끝에 \r이 남음)
+plugins/brownfield-navigator/bin/* text eol=lf
+plugins/brownfield-navigator/hooks/session-start text eol=lf
+plugins/brownfield-navigator/lib/*.sh text eol=lf
+plugins/brownfield-navigator/tests/*.sh text eol=lf
+*.md text eol=lf
+````
+
+- [ ] **Step 4: 전체 테스트와 검증**
+
+실행: `bash plugins/brownfield-navigator/tests/run-all.sh; echo "exit=$?"; claude plugin validate . && claude plugin validate plugins/brownfield-navigator; git check-attr eol -- plugins/brownfield-navigator/bin/compose-guide plugins/brownfield-navigator/hooks/run-hook.cmd README.md`
+기대: 테스트 파일 6개 모두 `0개 실패`, 마지막 줄 `테스트 파일 6개 모두 통과`, `exit=0`, 검증 두 번 모두 `✔ Validation passed`, 속성은 `compose-guide: eol: lf`, `run-hook.cmd: eol: unspecified`, `README.md: eol: lf`
+
+- [ ] **Step 5: Commit**
 
 ```bash
-git add README.md README.en.md
+git add README.md README.en.md .gitattributes
 git commit -F - <<'EOF'
-docs: 설치, 프로필 형식, 사용법을 담은 README 추가 (한국어, 영어)
+docs: 설치, 프로필 형식, 사용법을 담은 README(한국어, 영어)와 줄바꿈 속성 추가
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01Hpd4mB4Q7hB6xWvD76iD5k
