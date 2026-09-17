@@ -152,6 +152,19 @@ test_warnings_only_when_nothing_matches() {
   assert_not_contains "$output" "# brownfield-navigator 가이드" "매칭이 없으면 가이드 없음"
 }
 
+test_warns_on_unreadable_profile_files() {
+  mkdir -p "$TEST_TMP/profiles/orgs/folder/profile.md"
+  write_org_profile acme "match-remotes:" '  - "*acme/*"'
+  mkdir -p "$TEST_TMP/profiles/orgs/acme/projects"
+  ln -s "$TEST_TMP/missing-target.md" "$TEST_TMP/profiles/orgs/acme/projects/linked.md"
+  make_git_repo "$TEST_TMP/app" "git@github.com:acme/app.git"
+  local output
+  output="$(run_compose_guide "$TEST_TMP/app")"
+  assert_contains "$output" "건너뜀 $TEST_TMP/profiles/orgs/folder/profile.md: 파일을 읽을 수 없음" "디렉터리인 조직 프로필은 경고"
+  assert_contains "$output" "건너뜀 $TEST_TMP/profiles/orgs/acme/projects/linked.md: 파일을 읽을 수 없음" "깨진 링크인 프로젝트 파일은 경고"
+  assert_contains "$output" "## [acme-rule]" "읽을 수 있는 조직 프로필은 계속 병합"
+}
+
 test_unsupported_key_warning_with_guide() {
   write_org_profile acme "name: acme" "match-remotes:" '  - "*acme/*"'
   make_git_repo "$TEST_TMP/app" "git@github.com:acme/app.git"
@@ -197,6 +210,7 @@ run_test test_project_apply_overrides_org_apply
 run_test test_multiple_projects_use_last_apply_and_warn
 run_test test_manual_mode_merges_suggest_and_off
 run_test test_warnings_only_when_nothing_matches
+run_test test_warns_on_unreadable_profile_files
 run_test test_unsupported_key_warning_with_guide
 run_test test_two_auto_orgs_apply_first_only
 run_test test_lists_references

@@ -64,7 +64,8 @@ evaluate_org() {
   : > "$matched_projects_file"
   project_apply=""
   for project_file in "$org_dir"/projects/*.md; do
-    [ -f "$project_file" ] || continue
+    # glob 에 걸린 것이 없을 때만 건너뜀. 디렉터리나 깨진 링크는 파싱 단계에서 경고로 드러남
+    [ -e "$project_file" ] || [ -L "$project_file" ] || continue
     project_name="$(basename "$project_file" .md)"
     project_parsed="$WORK_DIR/project-$org_name-$project_name.parsed"
     parse_or_warn "$project_file" "$project_parsed" || continue
@@ -186,7 +187,7 @@ main() {
   list_remote_urls "$TARGET_DIR" > "$WORK_DIR/remotes"
 
   for org_profile in "$PROFILE_HOME"/orgs/*/profile.md; do
-    [ -f "$org_profile" ] || continue
+    [ -e "$org_profile" ] || [ -L "$org_profile" ] || continue
     evaluate_org "$org_profile" "$manual_mode"
   done
 
