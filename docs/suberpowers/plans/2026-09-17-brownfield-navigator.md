@@ -17,7 +17,7 @@
 - 모든 명령은 레포 루트 `~/personal/brownfield-navigator`에서 실행한다
 - 스크립트와 테스트는 bash 3.2에서 동작해야 한다. 연관 배열(`declare -A`), `mapfile`, `${var,,}`를 쓰지 않고, 픽스처는 heredoc 대신 `printf`로 만든다
 - macOS의 `bash`는 `/bin/bash` 3.2다. 테스트는 `bash plugins/brownfield-navigator/tests/<이름>.test.sh`, 전체는 `bash plugins/brownfield-navigator/tests/run-all.sh`로 실행한다
-- 파일 내용은 이 계획의 코드 블록과 **정확히 같게** 쓴다. 모든 코드 블록은 스크래치 시제품에서 bash 3.2로 전체 테스트(46개)와 `claude plugin validate` 통과를 확인한 내용이다
+- 파일 내용은 이 계획의 코드 블록과 **정확히 같게** 쓴다. 모든 코드 블록은 스크래치 시제품에서 bash 3.2로 전체 테스트(50개)와 `claude plugin validate` 통과를 확인한 내용이다
 - 이 레포는 개인 레포이므로 커밋 메시지는 `type: 한국어 설명` 형식에 attribution trailer 두 줄을 붙인다. 각 Task의 Commit step에 들어 있는 trailer는 계획 작성 세션 기준이므로, 실행 세션의 attribution 안내가 다르면 그 안내를 따른다
 - 테스트가 실패하면 코드 블록과 파일이 같은지부터 확인한다 (`diff`)
 
@@ -939,16 +939,34 @@ test_prints_heading_without_title() {
   assert_contains "$(print_merged_sections "$TEST_TMP/merged")" "## [bare] (개인)" "제목이 없으면 id와 출처만"
 }
 
+test_prints_first_paragraph_for_summary_source() {
+  write_lines "$TEST_TMP/core.md" "## [alpha] 코어 알파" "" "코어 요약 문단" "" "- 코어 세부 목록" "" "**Why:** 코어 이유"
+  write_lines "$TEST_TMP/org.md" "## [beta] 조직 베타" "조직 요약 문단" "" "**Why:** 조직 이유"
+  extract_rule_sections "$TEST_TMP/core.md" "$TEST_TMP/core"
+  extract_rule_sections "$TEST_TMP/org.md" "$TEST_TMP/org"
+  merge_rule_layer "$TEST_TMP/core" "코어" "$TEST_TMP/merged"
+  merge_rule_layer "$TEST_TMP/org" "조직: acme" "$TEST_TMP/merged"
+  local output
+  output="$(print_merged_sections "$TEST_TMP/merged" "코어")"
+  assert_contains "$output" "## [alpha] 코어 알파 (코어)
+코어 요약 문단
+" "요약 대상 출처는 첫 문단만"
+  assert_not_contains "$output" "코어 세부 목록" "요약 대상의 나머지 본문은 빠짐"
+  assert_not_contains "$output" "코어 이유" "요약 대상의 Why는 빠짐"
+  assert_contains "$output" "**Why:** 조직 이유" "다른 출처는 본문 전체"
+}
+
 run_test test_extracts_only_id_sections
 run_test test_merges_layers_in_place
 run_test test_prints_heading_without_title
+run_test test_prints_first_paragraph_for_summary_source
 finish_tests
 ````
 
 - [ ] **Step 2: 테스트를 실행해 실패 확인**
 
 실행: `bash plugins/brownfield-navigator/tests/sections.test.sh; echo "exit=$?"`
-기대: `lib/sections.sh: No such file or directory`, 마지막 줄 `sections.test.sh: 3개 중 3개 실패`, `exit=1`
+기대: `lib/sections.sh: No such file or directory`, 마지막 줄 `sections.test.sh: 4개 중 4개 실패`, `exit=1`
 
 - [ ] **Step 3: 구현 작성**
 
@@ -1011,8 +1029,9 @@ merge_rule_layer() {
 }
 
 # 병합 결과를 병합 순서대로 출력. 헤딩 끝에 최종 출처를 붙임
+# summary_source 를 주면 최종 출처가 그 값인 섹션은 본문의 첫 문단만 출력
 print_merged_sections() {
-  local merged_dir="$1" section_id title source_label
+  local merged_dir="$1" summary_source="${2:-}" section_id title source_label
   [ -f "$merged_dir/order" ] || return 0
   while IFS= read -r section_id; do
     title="$(cat "$merged_dir/$section_id.title")"
@@ -1022,9 +1041,21 @@ print_merged_sections() {
     else
       printf '## [%s] (%s)\n' "$section_id" "$source_label"
     fi
-    print_without_trailing_blank_lines "$merged_dir/$section_id.body"
+    if [ -n "$summary_source" ] && [ "$source_label" = "$summary_source" ]; then
+      print_first_paragraph "$merged_dir/$section_id.body"
+    else
+      print_without_trailing_blank_lines "$merged_dir/$section_id.body"
+    fi
     printf '\n'
   done < "$merged_dir/order"
+}
+
+# 앞쪽 빈 줄을 건너뛰고 첫 문단(다음 빈 줄 전까지)만 출력
+print_first_paragraph() {
+  awk '
+    /^[[:space:]]*$/ { if (started) exit; next }
+    { started = 1; print }
+  ' "$1"
 }
 
 print_without_trailing_blank_lines() {
@@ -1042,7 +1073,7 @@ print_without_trailing_blank_lines() {
 - [ ] **Step 4: 테스트를 실행해 통과 확인**
 
 실행: `bash plugins/brownfield-navigator/tests/sections.test.sh; echo "exit=$?"`
-기대: `sections.test.sh: 3개 중 0개 실패`, `exit=0`
+기대: `sections.test.sh: 4개 중 0개 실패`, `exit=0`
 
 - [ ] **Step 5: Commit**
 
@@ -1096,7 +1127,7 @@ argument-hint: "[레포 경로 또는 이름]"
 ## 호출되었을 때
 
 1. 작업 대상 경로를 정한다. 사용자가 경로를 말했으면 그 경로, 레포 이름만 말했으면 그 이름으로 찾은 경로, 아니면 현재 작업 디렉터리다
-2. 세션 컨텍스트에 `# brownfield-navigator 가이드`로 시작하는 병합된 가이드가 이미 있고 머리말의 `- 대상:` 경로가 작업 대상과 같은 레포면 추가로 할 일은 없다. 그 가이드대로 작업을 계속한다. 매칭 근거 줄은 경로 패턴이면 여러 레포에 함께 맞으므로 이 판단에 쓰지 않는다. 불러올 수 있다는 한 줄 안내만 있거나 다른 레포 기준의 가이드라면 다음 단계로 간다
+2. 세션 컨텍스트에 `# brownfield-navigator 가이드`로 시작하는 병합된 가이드가 이미 있고 머리말의 `- 대상:` 경로가 작업 대상과 같은 레포면 추가로 할 일은 없다. 그 가이드대로 작업을 계속한다. 매칭 근거 줄은 경로 패턴이면 여러 레포에 함께 맞으므로 이 판단에 쓰지 않는다. 가이드가 길어 앞부분만 보이고 저장된 파일 경로가 함께 표시되어 있으면 그 파일을 Read한 뒤 판단한다. 불러올 수 있다는 한 줄 안내만 있거나 다른 레포 기준의 가이드라면 다음 단계로 간다
 3. 아래 명령 중 하나를 실행한다. `--manual`은 `apply`가 `suggest`나 `off`인 설정도 적용하므로 사용자가 요청했을 때만 붙인다
 
    ```bash
@@ -1117,7 +1148,7 @@ argument-hint: "[레포 경로 또는 이름]"
 
 ## [guide-stance] 가이드를 대하는 태도
 
-이 가이드는 기존 흐름을 이어가는 확장·유지보수 작업의 기본값이다.
+이 가이드는 기존 흐름을 이어가는 확장·유지보수 작업의 기본값이다. 사용자가 다른 방식을 원하면 따르고 어긋나는 지점만 한 번 짧게 알리며, "가이드 끄기"를 요청하면 그 세션에서는 적용하지 않는다.
 
 - 사용자가 새 구조, 실험, 컨벤션에서 벗어나는 작업을 원하면 그대로 따른다. 가이드와 어긋나는 지점만 한 번, 한 줄로 알리고 반복해서 권하지 않는다
 - 사용자가 "가이드 끄기"처럼 적용 중단을 요청하면 그 세션에서는 대화가 압축되어 가이드가 다시 주입되더라도 적용하지 않는다
@@ -1138,10 +1169,7 @@ TDD, 계획 작성·실행 같은 워크플로우 스킬의 단계(커밋, 테�
 
 ## [actual-tooling] 선언된 도구와 실제 도구
 
-`package.json` 스크립트나 설정 파일이 있다고 해서 그 도구가 실제로 동작한다는 뜻은 아니다.
-
-- 작업 전에 실제로 쓸 수 있는 검증 수단(타입체크, 빌드, 포매터, 테스트 실행)을 확인한다
-- 동작하지 않는 도구를 설치하거나 고치는 데 시간을 쓰지 않는다. 동작하지 않는다는 사실과 대신 쓴 검증 수단을 알린다
+`package.json` 스크립트나 설정 파일이 있어도 그 도구가 실제로 동작한다고 보지 않는다. 실제로 쓸 수 있는 검증 수단(타입체크, 빌드, 포매터, 테스트 실행)을 먼저 확인하고, 동작하지 않는 도구는 설치하거나 고치는 데 시간을 쓰지 않고 그 사실과 대신 쓴 검증 수단을 알린다.
 
 **Why:** lint 스크립트는 있는데 도구가 설치되어 있지 않거나, 테스트 설정은 있는데 테스트를 쓰지 않는 레거시 레포가 흔하다.
 
@@ -1153,27 +1181,23 @@ TDD, 계획 작성·실행 같은 워크플로우 스킬의 단계(커밋, 테�
 
 ## [existing-vocabulary] 기존 어휘 사용
 
-용어, 디자인 토큰 이름, 타입과 변수 이름은 코드베이스, 같은 백엔드나 디자인 시스템을 쓰는 자매 프로젝트, 팀 용어집에서 먼저 찾는다.
+용어, 디자인 토큰 이름, 타입과 변수 이름은 코드베이스, 같은 백엔드나 디자인 시스템을 쓰는 자매 프로젝트, 팀 용어집에서 먼저 찾아 쓰고 없는 어휘를 새로 만들지 않는다. 표준 용어인지보다 이 팀이 아는 말인지가 기준이며, 확신이 없으면 명사를 만들지 말고 하는 일을 풀어 쓴다.
 
-- 없는 어휘를 새로 만들지 않는다
-- 표준 용어인지보다 이 팀이 아는 말인지가 기준이다. 확신이 없으면 명사를 만들지 말고 하는 일을 그대로 풀어 쓴다
 - 전문용어를 다른 전문용어로 바꾸는 것은 해결이 아니다
 
 **Why:** 읽는 사람이 모르는 단어는 이름값을 못 한다. 자매 프로젝트끼리 이름이 갈라지면 대조와 유지보수가 어려워진다.
 
 ## [comment-density] 주석의 양과 어조
 
-주석의 밀도와 어조는 주변 코드에 맞춘다.
+주석의 밀도와 어조는 주변 코드에 맞춘다. 코드가 이미 말하는 내용은 반복하지 않고, 고치는 사람이 실제로 빠질 함정과 코드만 봐서는 알 수 없는 이유만 남긴다.
 
-- 코드가 이미 말하는 내용을 자연어로 반복하지 않는다
-- 고치는 사람이 실제로 빠질 함정과, 코드만 봐서는 알 수 없는 이유만 남긴다
 - 설계 배경 설명은 문서에 두고, 코드에는 필요한 "왜"만 한두 문장으로 둔다
 
 **Why:** 주변 톤과 어긋나는 장황한 주석은 리뷰에서 대부분 지워지고, 남으면 코드와 함께 낡는다.
 
 ## [preserve-vs-decide] 보존과 결정을 구분
 
-기존 동작을 보존하는 수정과 새 동작을 정하는 수정을 구분한다. 요청, 명세, 기존 코드 어디에도 정해지지 않은 동작을 새로 정해야 하면 구현 전에 먼저 묻는다.
+기존 동작을 보존하는 수정과 새 동작을 정하는 수정을 구분한다. 요청, 명세, 기존 코드 어디에도 정해지지 않은 동작을 새로 정해야 하면 구현 전에 먼저 묻는다. 작성 의도가 코드에서 분명한 버그는 버그가 만든 동작이 아니라 의도를 보존한다.
 
 - 대상 예: 에러를 무시할지 재시도할지 중단할지, 모달을 띄울지와 그 문구, 기본값, 부분 실패 시 성공분을 유지할지
 - 물을 때는 "현재 동작 / 문제 지점 / 선택지"로 정리하고, 성격이 같은 결정은 묶는다
@@ -1189,11 +1213,7 @@ TDD, 계획 작성·실행 같은 워크플로우 스킬의 단계(커밋, 테�
 
 ## [ideal-vs-current] 이상적인 구조와 현재 구조
 
-리팩토링이나 재설계 요청을 받으면 다음을 함께 제시하고 선택은 사용자에게 맡긴다.
-
-- 명세 기준으로 독립적이고 완결된 이상적인 구조
-- 기존 코드에 얹는 방식
-- 두 방식의 비용과 이득
+리팩토링이나 재설계 요청을 받으면 명세 기준으로 독립적이고 완결된 이상적인 구조, 기존 코드에 얹는 방식, 두 방식의 비용과 이득을 함께 제시하고 선택은 사용자에게 맡긴다.
 
 이때 최소 수정을 고르더라도 이상적인 구조와의 차이는 명시한다. 새로 추가하는 코드는 바뀌는 이유가 다른 것(서버 계약과 화면 판정 규칙 등)끼리 한 파일에 섞지 않고, 이미 섞여 있는 기존 파일은 나누자고 제안만 한다.
 
@@ -1201,17 +1221,15 @@ TDD, 계획 작성·실행 같은 워크플로우 스킬의 단계(커밋, 테�
 
 ## [respect-user-edits] 사용자의 수정 존중
 
-사용자가 고친 코드, 주석, 이름은 되돌리지 않는다.
+사용자가 고친 코드, 주석, 이름은 되돌리지 않고 현재 파일을 기준으로 삼는다. 사용자의 수정 때문에 사실과 달라진 부분(없어진 함수를 가리키는 주석 등)만 지적하고 고친다.
 
-- 파일이 바뀌어 있으면 현재 상태가 기준이다
 - 계획이나 spec 문서의 코드는 실제 파일에 맞춰 갱신한다. 반대 방향으로 고치지 않는다
-- 사용자의 수정 때문에 사실과 달라진 부분(없어진 함수를 가리키는 주석 등)만 지적하고 고친다
 
 **Why:** 사용자는 코드를 직접 다듬으며 이해하고 정리한다. 원래 문구를 되살리면 그 과정을 되돌리게 된다.
 
 ## [verify-premise] 구조 변경 전 전제 검증
 
-구조를 바꾸자고 권하기 전에 그 권고의 전제를 검증한다.
+구조를 바꾸자고 권하기 전에 그 권고의 전제를 소스, 실제 스택 재현, 변경 이력으로 검증한다. 부수적인 목적의 작업이 구조 변경을 요구하면 전제가 틀렸다는 신호로 보고 멈춘다.
 
 - 문서나 인수인계의 결론만 믿지 않고, 그 결론을 뒷받침하는 동작 원리를 소스에서 확인한다
 - 타이밍이나 순서 실험은 실제 스택 그대로(상태 라이브러리, 빌드 모드 포함) 재현한다. 부품 하나를 빼면 결론이 뒤집힐 수 있다
@@ -1223,7 +1241,7 @@ TDD, 계획 작성·실행 같은 워크플로우 스킬의 단계(커밋, 테�
 
 ## [structural-evidence] 구조적 근거로 판정
 
-간헐적으로 나타나는 현상을 검증할 때 조건을 바꿔 가며 표본을 늘리지 않는다.
+간헐적으로 나타나는 현상은 조건을 바꿔 가며 표본을 늘리지 않고, 원인이 되는 구조가 제거됐는지를 직접 확인해 판정한다.
 
 1. 원인이 되는 구조가 제거됐는지 직접 측정한다
 2. 같은 조건(같은 입력, 같은 검출 방법)에서 비교 대상이 실제로 반응한 A/B 측정이 1회 있으면 1과 함께 판정 근거로 충분하다
@@ -1233,6 +1251,8 @@ TDD, 계획 작성·실행 같은 워크플로우 스킬의 단계(커밋, 테�
 **Why:** 확률적인 현상은 표본을 늘려도 "이번엔 안 났다"만 반복되어 끝나지 않는다.
 
 ## [doc-conflict] 문서끼리 어긋날 때
+
+문서끼리 어긋나면 프로필의 우선순위 규칙, 문서 성격(계약 문서가 정본), 최종 수정일, 실제 응답과 코드 확인 순으로 판정하고, 그래도 판정이 서지 않으면 양쪽 해석을 만족하는 구현을 찾거나 사용자에게 묻는다.
 
 1. 이 가이드에 그 주제의 우선순위 규칙이 있으면 따른다
 2. 문서의 성격을 구분한다. 계약 문서(API 스펙 등)는 주고받는 형태의 정본이고, 설계·기획 문서는 의도를 파악하고 미리 작업하기 위한 참고 자료다
@@ -1244,7 +1264,7 @@ TDD, 계획 작성·실행 같은 워크플로우 스킬의 단계(커밋, 테�
 
 ## [spec-import] 필드와 타입 반영
 
-상황에 따라 기준이 다르다.
+다른 코드베이스에 이미 정의된 계약을 옮길 때는 전체를 그대로 옮기고, 문서를 보고 새로 정의할 때는 쓰는 곳이 있는 필드만 넣는다.
 
 - **이미 다른 코드베이스에 정의된 계약을 옮길 때:** 필요한 부분만 추리지 않고 전체를 그대로 옮긴다(enum 멤버, 인터페이스 필드, 주석, 의존 타입). 같은 이름이 이미 있으면 덮어쓰지 않고 비교해서 보완한다. 값이 다르면 임의로 합치지 않고 알린다
 - **문서를 보고 새로 정의할 때:** 쓰는 곳이 있는지로 판단한다. 쓰는 곳이 있으면 문서나 응답에 아직 없어도 optional로 미리 넣는다(오지 않으면 undefined라 동작이 바뀌지 않는다). 쓰는 곳도 의미도 모르는 필드는 넣지 않는다
@@ -1375,6 +1395,65 @@ test_merges_core_and_org_on_ssh_remote() {
   assert_contains "$output" "## [acme-rule] acme 규칙 (조직: acme)" "조직 섹션"
   assert_order "$output" "## [team-boundary]" "## [acme-rule]" "조직의 새 id는 코어 뒤에 추가"
   assert_not_contains "$output" "## 호출되었을 때" "코어의 id 없는 섹션은 제외"
+}
+
+test_core_sections_are_summarized() {
+  write_lines "$TEST_TMP/profiles/orgs/acme/profile.md" \
+    "---" "match-remotes:" '  - "*acme/*"' "---" \
+    "## [acme-rule] 조직 규칙" "조직 규칙 문단" "" "**Why:** 조직 규칙의 이유"
+  make_git_repo "$TEST_TMP/app" "git@github.com:acme/app.git"
+  local output
+  output="$(run_compose_guide "$TEST_TMP/app")"
+  assert_contains "$output" "## [guide-stance] 가이드를 대하는 태도 (코어)
+이 가이드는 기존 흐름을 이어가는 확장·유지보수 작업의 기본값이다." "코어 규칙은 첫 문단을 출력"
+  assert_not_contains "$output" "**Why:** 컨벤션을 따르고 싶은 사용자를 돕는 도구이지" "코어 규칙의 Why는 빠짐"
+  assert_contains "$output" "$PLUGIN_ROOT/skills/brownfield-navigator/SKILL.md 의 같은 id 섹션" "머리말에 코어 전문 위치 안내"
+  assert_contains "$output" "**Why:** 조직 규칙의 이유" "조직 규칙은 전문"
+  assert_not_contains "$output" "> 이 가이드는" "예산 안이면 길이 안내 없음"
+}
+
+test_notice_when_guide_exceeds_budget() {
+  local long_body
+  long_body="$(awk 'BEGIN { for (i = 0; i < 9000; i++) printf "가" }')"
+  write_lines "$TEST_TMP/profiles/orgs/acme/profile.md" \
+    "---" "match-remotes:" '  - "*acme/*"' "---" \
+    "## [long-rule] 긴 규칙" "$long_body"
+  make_git_repo "$TEST_TMP/app" "git@github.com:acme/app.git"
+  local output
+  output="$(run_compose_guide "$TEST_TMP/app")"
+  assert_contains "$output" "# brownfield-navigator 가이드
+
+> 이 가이드는" "예산을 넘으면 제목 바로 아래에 안내"
+  assert_contains "$output" "그 파일을 Read해 전체를 읽고 따른다" "안내에 전체를 읽으라는 지시"
+  assert_order "$output" "> 이 가이드는" "- 조직: acme" "안내는 머리말보다 앞"
+  assert_contains "$output" "## [long-rule] 긴 규칙 (조직: acme)" "가이드 본문은 그대로 출력"
+
+  local medium_body
+  medium_body="$(awk 'BEGIN { for (i = 0; i < 4000; i++) printf "가" }')"
+  write_lines "$TEST_TMP/profiles/orgs/beta/profile.md" \
+    "---" "match-remotes:" '  - "*beta/*"' "---" \
+    "## [medium-rule] 중간 규칙" "$medium_body"
+  make_git_repo "$TEST_TMP/beta-app" "git@github.com:beta/app.git"
+  assert_not_contains "$(run_compose_guide "$TEST_TMP/beta-app")" "> 이 가이드는" "바이트가 아니라 문자 수로 셈 (한글 4,000자 규칙은 예산 안)"
+}
+
+test_project_matching_and_layer_precedence() {
+  write_org_profile acme "match-remotes:" '  - "*acme/*"'
+  write_lines "$TEST_TMP/profiles/personal.md" \
+    "## [acme-rule] 개인이 바꾼 규칙" "개인 본문" \
+    "## [shared] 개인 공유 규칙" "개인 공유 본문"
+  write_project_file acme app "match-remotes:" '  - "*acme/app"' -- "## [shared] 앱 공유 규칙" "앱 공유 본문"
+  write_project_file acme other "match-remotes:" '  - "*acme/other"' -- "## [shared] 다른 공유 규칙" "다른 공유 본문" "## [other-only] 다른 레포 전용" "다른 본문"
+  make_git_repo "$TEST_TMP/app" "git@github.com:acme/app.git"
+  local output
+  output="$(run_compose_guide "$TEST_TMP/app")"
+  assert_contains "$output" "- 프로젝트 파일: app
+" "매칭된 프로젝트 파일만 표시"
+  assert_contains "$output" "## [shared] 앱 공유 규칙 (프로젝트: app)" "프로젝트가 개인보다 우선"
+  assert_contains "$output" "## [acme-rule] 개인이 바꾼 규칙 (개인)" "개인이 조직보다 우선"
+  assert_not_contains "$output" "other-only" "매칭되지 않은 프로젝트 규칙은 빠짐"
+  assert_not_contains "$output" "다른 공유 본문" "매칭되지 않은 프로젝트의 같은 id도 빠짐"
+  assert_not_contains "$output" "## brownfield-navigator 경고" "매칭되지 않은 프로젝트는 경고 없음"
 }
 
 test_matches_https_remote_with_trailing_slash() {
@@ -1521,6 +1600,9 @@ test_lists_references() {
 run_test test_empty_without_profile_home
 run_test test_empty_when_nothing_matches
 run_test test_merges_core_and_org_on_ssh_remote
+run_test test_core_sections_are_summarized
+run_test test_notice_when_guide_exceeds_budget
+run_test test_project_matching_and_layer_precedence
 run_test test_matches_https_remote_with_trailing_slash
 run_test test_matches_path_without_git_from_subdirectory
 run_test test_project_replaces_core_section_in_place
@@ -1540,7 +1622,7 @@ finish_tests
 - [ ] **Step 2: 테스트를 실행해 실패 확인**
 
 실행: `bash plugins/brownfield-navigator/tests/compose-guide.test.sh; echo "exit=$?"`
-기대: `bin/compose-guide: No such file or directory`, 마지막 줄 `compose-guide.test.sh: 16개 중 16개 실패`, `exit=1`
+기대: `bin/compose-guide: No such file or directory`, 마지막 줄 `compose-guide.test.sh: 19개 중 19개 실패`, `exit=1`
 
 - [ ] **Step 3: 구현 작성**
 
@@ -1563,6 +1645,8 @@ PLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 CORE_SKILL_FILE="$PLUGIN_ROOT/skills/brownfield-navigator/SKILL.md"
 PROFILE_HOME="${BROWNFIELD_NAVIGATOR_HOME:-$HOME/.claude/brownfield-navigator}"
 SKILL_COMMAND="/brownfield-navigator:brownfield-navigator"
+# 훅 출력은 10,000자를 넘으면 앞부분 미리보기만 전달되므로 여유를 두고 잡은 예산
+GUIDE_CHARACTER_BUDGET=9000
 
 . "$PLUGIN_ROOT/lib/profile.sh"
 . "$PLUGIN_ROOT/lib/match.sh"
@@ -1662,6 +1746,7 @@ print_header() {
   printf '\n'
   printf '%s\n\n' "기존 코드의 흐름과 조직 컨벤션을 따르는 작업을 위한 기본 가이드다. 사용자가 다른 방식을 원하면 그쪽을 따르고, 가이드와 어긋나는 지점만 한 번 짧게 알린다."
   printf '%s\n\n' "우선순위: 현재 사용자 지시 > CLAUDE.md > 프로젝트(프로젝트 파일, 프로젝트 메모리) > 개인 > 조직 > 코어. 같은 id의 규칙은 아래에 이미 이 순서로 병합되어 있다."
+  printf '%s\n\n' "(코어) 규칙은 핵심 문단만 담았다. 세부 기준과 이유는 $CORE_SKILL_FILE 의 같은 id 섹션에 있으니 해당 상황에서 필요하면 읽는다."
 }
 
 print_suggestions() {
@@ -1687,7 +1772,7 @@ print_rule_sections() {
     extract_rule_sections "$project_file" "$WORK_DIR/layer-project"
     merge_rule_layer "$WORK_DIR/layer-project" "프로젝트: $(basename "$project_file" .md)" "$merged_dir"
   done < "$WORK_DIR/projects-$org_name"
-  print_merged_sections "$merged_dir"
+  print_merged_sections "$merged_dir" "코어"
 }
 
 print_references() {
@@ -1708,6 +1793,24 @@ print_references() {
   if [ "$has_reference" = 1 ]; then
     printf '\n'
   fi
+}
+
+# UTF-8 문자 수. 이어지는 바이트(0x80~0xBF)를 빼고 세므로 로캘과 무관
+count_characters() {
+  LC_ALL=C tr -d '\200-\277' < "$1" | wc -c | tr -d ' '
+}
+
+# 예산을 넘으면 첫 줄 제목 바로 아래에 전체를 읽으라는 안내를 넣어 출력. 안내가 미리보기 안에 들어가야 함
+print_with_budget_notice() {
+  local output_file="$1" character_count
+  character_count="$(count_characters "$output_file")"
+  if [ "$character_count" -le "$GUIDE_CHARACTER_BUDGET" ]; then
+    cat "$output_file"
+    return 0
+  fi
+  sed -n '1p' "$output_file"
+  printf '\n> 이 가이드는 %s자로 훅 출력 한도에 가깝다. 앞부분만 보이고 저장된 파일 경로가 함께 표시되어 있으면, 그 파일을 Read해 전체를 읽고 따른다.\n' "$character_count"
+  sed -n '2,$p' "$output_file"
 }
 
 print_warnings() {
@@ -1748,21 +1851,24 @@ main() {
     add_warning "여러 조직이 매칭됨: $(cut -f1 "$WORK_DIR/auto-orgs" | join_lines /dev/stdin). $selected_org 만 적용함. 매칭 조건을 좁힐 것"
   fi
 
-  if [ -n "$selected_org" ]; then
-    print_header "$selected_org" "$selected_reason"
-  elif [ -s "$WORK_DIR/suggest-orgs" ]; then
-    printf '# brownfield-navigator 안내\n\n'
-  fi
-  if [ -s "$WORK_DIR/suggest-orgs" ]; then
-    print_suggestions
-  fi
-  if [ -n "$selected_org" ]; then
-    print_rule_sections "$selected_org"
-    print_references "$selected_org"
-  fi
-  if [ -s "$WORK_DIR/warnings" ]; then
-    print_warnings
-  fi
+  {
+    if [ -n "$selected_org" ]; then
+      print_header "$selected_org" "$selected_reason"
+    elif [ -s "$WORK_DIR/suggest-orgs" ]; then
+      printf '# brownfield-navigator 안내\n\n'
+    fi
+    if [ -s "$WORK_DIR/suggest-orgs" ]; then
+      print_suggestions
+    fi
+    if [ -n "$selected_org" ]; then
+      print_rule_sections "$selected_org"
+      print_references "$selected_org"
+    fi
+    if [ -s "$WORK_DIR/warnings" ]; then
+      print_warnings
+    fi
+  } > "$WORK_DIR/output"
+  print_with_budget_notice "$WORK_DIR/output"
 }
 
 main "$@"
@@ -1772,12 +1878,12 @@ exit 0
 - [ ] **Step 4: 실행 권한 부여 후 테스트를 실행해 통과 확인**
 
 실행: `chmod +x plugins/brownfield-navigator/bin/compose-guide && bash plugins/brownfield-navigator/tests/compose-guide.test.sh; echo "exit=$?"`
-기대: `compose-guide.test.sh: 16개 중 0개 실패`, `exit=0`
+기대: `compose-guide.test.sh: 19개 중 0개 실패`, `exit=0`
 
 - [ ] **Step 5: 전체 테스트 확인**
 
 실행: `bash plugins/brownfield-navigator/tests/run-all.sh; echo "exit=$?"`
-기대: compose-guide 16개, match 8개, profile 14개, sections 3개 모두 `0개 실패`, 마지막 줄 `테스트 파일 4개 모두 통과`, `exit=0`
+기대: compose-guide 19개, match 8개, profile 14개, sections 4개 모두 `0개 실패`, 마지막 줄 `테스트 파일 4개 모두 통과`, `exit=0`
 
 - [ ] **Step 6: Commit**
 
@@ -2971,6 +3077,21 @@ src | - 조직: pnpt (근거: remote git@github.com:pnpt-ds/fez-front-taap) | - 
 ## [commit-by-user] 커밋은 직접 (개인)
 ## [workflow-docs] 워크플로우 산출물 (프로젝트: fez-front-taap)
 ```
+
+- [ ] **Step 12: 세션 주입 길이 확인**
+
+Claude Code는 훅 출력을 10,000자로 제한한다. bran 프로필로 만든 가이드가 예산(9,000자) 안인지 확인한다.
+
+실행:
+
+```bash
+for d in ~/repositories/fez-front-taap ~/repositories/omar-front-ctrl-room ~/repositories/front-space-petco ~/repositories/fez-front-ctrl-central ~/repositories/fez-front-court ~/repositories/front-taap-stpm; do
+  printf '{"cwd":"%s"}' "$d" | bash plugins/brownfield-navigator/hooks/session-start \
+    | python3 -c 'import json, sys; context = json.load(sys.stdin)["hookSpecificOutput"]["additionalContext"]; print(sys.argv[1], len(context), "안내 있음" if "> 이 가이드는" in context else "안내 없음")' "$(basename "$d")"
+done
+```
+
+기대: 6줄 모두 길이가 9,000 이하이고 `안내 없음`. 넘는 레포가 있으면 멈추고 사용자에게 알린다(조직 규칙 문장을 줄이거나 참고 파일로 옮길지 결정 필요)
 
 ---
 
