@@ -1,0 +1,2694 @@
+# Brownfield Navigator Implementation Plan
+
+> **agentic worker에게:** REQUIRED SUB-SKILL: 이 plan을 task 단위로 구현하려면 suberpower:subagent-driven-development(권장) 또는 suberpower:executing-plans를 사용하세요. Step은 추적을 위해 checkbox(`- [ ]`) 문법을 사용합니다.
+
+**Goal:** 조직, 개인, 프로젝트 프로필을 병합해 세션 시작 때 레거시 작업 가이드로 주입하는 Claude Code 플러그인 `brownfield-navigator`를 만들고, 첫 사용자(bran) 프로필을 작성해 실제 레포에서 검증한다.
+
+**Architecture:** 매칭과 병합은 bash 스크립트 `bin/compose-guide`가 담당하고, 파싱, 매칭, 섹션 병합 함수는 `lib/`에 나눈다. SessionStart 훅과 코어 스킬이 같은 `compose-guide`를 호출한다. 규칙은 `## [id] 제목` 섹션 단위로 코어, 조직, 개인, 프로젝트 순으로 병합하며, 사용자 프로필은 플러그인 바깥 `~/.claude/brownfield-navigator/`에 둔다.
+
+**Tech Stack:** bash 3.2 호환 셸 스크립트, awk/sed/grep (BSD와 GNU 공통 옵션), Claude Code 플러그인 (hooks, skills, marketplace), python3 (테스트의 JSON 검증에만 사용)
+
+**Spec:** `docs/suberpowers/specs/2026-09-17-brownfield-navigator-design.md`
+
+---
+
+## 공통 사항
+
+- 모든 명령은 레포 루트 `~/personal/brownfield-navigator`에서 실행한다
+- 스크립트와 테스트는 bash 3.2에서 동작해야 한다. 연관 배열(`declare -A`), `mapfile`, `${var,,}`를 쓰지 않고, 픽스처는 heredoc 대신 `printf`로 만든다
+- macOS의 `bash`는 `/bin/bash` 3.2다. 테스트는 `bash plugins/brownfield-navigator/tests/<이름>.test.sh`, 전체는 `bash plugins/brownfield-navigator/tests/run-all.sh`로 실행한다
+- 파일 내용은 이 계획의 코드 블록과 **정확히 같게** 쓴다. 모든 코드 블록은 스크래치 시제품에서 bash 3.2로 전체 테스트(41개)와 `claude plugin validate` 통과를 확인한 내용이다
+- 이 레포는 개인 레포이므로 커밋 메시지는 `type: 한국어 설명` 형식에 attribution trailer 두 줄을 붙인다. 각 Task의 Commit step에 그대로 들어 있다
+- 테스트가 실패하면 코드 블록과 파일이 같은지부터 확인한다 (`diff`)
+
+## 파일 구조
+
+| 파일 | 책임 |
+|---|---|
+| `.claude-plugin/marketplace.json` | 레포를 마켓플레이스로 등록 |
+| `README.md` | 설치, 처음 설정, 프로필 형식, 수동 호출, 주의 사항 |
+| `plugins/brownfield-navigator/.claude-plugin/plugin.json` | 플러그인 매니페스트 |
+| `plugins/brownfield-navigator/lib/profile.sh` | 조직·프로젝트 파일 frontmatter 파싱, 참고 파일 description 추출 |
+| `plugins/brownfield-navigator/lib/match.sh` | remote URL 정규화, 경로(상위 디렉터리 포함)와 remote 매칭, 매칭 근거 출력 |
+| `plugins/brownfield-navigator/lib/sections.sh` | `## [id]` 섹션 추출, 층 병합(같은 id 제자리 교체), 출처 표기 출력 |
+| `plugins/brownfield-navigator/bin/compose-guide` | 대상 디렉터리에 맞는 조직·프로젝트를 찾아 가이드 텍스트 출력 (`--manual` 지원) |
+| `plugins/brownfield-navigator/hooks/hooks.json` | SessionStart 훅 등록 |
+| `plugins/brownfield-navigator/hooks/run-hook.cmd` | Windows와 Unix 공용 훅 실행 래퍼 (suberpower와 같은 파일) |
+| `plugins/brownfield-navigator/hooks/session-start` | 훅 입력에서 cwd를 얻어 compose-guide 출력을 JSON으로 감싸 주입 |
+| `plugins/brownfield-navigator/skills/brownfield-navigator/SKILL.md` | 코어 규칙 16개와 수동 호출 절차 |
+| `plugins/brownfield-navigator/skills/harvest-profile/SKILL.md` | 프로젝트 메모리를 모아 프로필 초안을 만드는 절차 |
+| `plugins/brownfield-navigator/templates/*.md` | 조직, 개인, 프로젝트, 참고 파일 템플릿 |
+| `plugins/brownfield-navigator/tests/test-helpers.sh` | 단언, 테스트 실행, 픽스처 작성 도구 |
+| `plugins/brownfield-navigator/tests/run-all.sh` | 전체 테스트 실행 |
+| `plugins/brownfield-navigator/tests/*.test.sh` | lib, compose-guide, 훅, 템플릿 테스트 |
+
+spec과 달라진 점: 플러그인 스킬은 `/<플러그인>:<스킬>`로 호출되므로 안내문과 문서의 호출 이름을 `/brownfield-navigator:brownfield-navigator`, `/brownfield-navigator:harvest-profile`로 쓴다 (spec에도 반영됨).
+
+---
+
+### Task 1: 마켓플레이스와 플러그인 매니페스트
+
+**Files:**
+- Create: `.claude-plugin/marketplace.json`
+- Create: `plugins/brownfield-navigator/.claude-plugin/plugin.json`
+
+- [ ] **Step 1: 마켓플레이스 매니페스트 작성**
+
+`.claude-plugin/marketplace.json`
+
+````json
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "brownfield-navigator",
+  "description": "레거시 코드베이스에서 회사 컨벤션과 기존 흐름을 따르는 작업 가이드 플러그인",
+  "owner": {
+    "name": "june20516"
+  },
+  "plugins": [
+    {
+      "name": "brownfield-navigator",
+      "source": "./plugins/brownfield-navigator",
+      "description": "레거시 코드베이스에서 회사 컨벤션과 기존 코드의 흐름을 따르는 작업 가이드. 조직, 개인, 프로젝트 프로필을 세션 시작 때 병합해 주입한다",
+      "version": "0.1.0",
+      "author": {
+        "name": "june20516"
+      },
+      "category": "development",
+      "homepage": "https://github.com/june20516/brownfield-navigator"
+    }
+  ]
+}
+````
+
+- [ ] **Step 2: 플러그인 매니페스트 작성**
+
+`plugins/brownfield-navigator/.claude-plugin/plugin.json`
+
+````json
+{
+  "name": "brownfield-navigator",
+  "description": "레거시 코드베이스에서 회사 컨벤션과 기존 코드의 흐름을 따르는 작업 가이드. 조직, 개인, 프로젝트 프로필을 세션 시작 때 병합해 주입한다",
+  "version": "0.1.0",
+  "author": {
+    "name": "june20516"
+  },
+  "homepage": "https://github.com/june20516/brownfield-navigator",
+  "repository": "https://github.com/june20516/brownfield-navigator",
+  "keywords": [
+    "brownfield",
+    "legacy",
+    "conventions",
+    "skills",
+    "hooks",
+    "korean"
+  ]
+}
+````
+
+- [ ] **Step 3: 매니페스트 검증**
+
+실행: `claude plugin validate . && claude plugin validate plugins/brownfield-navigator`
+기대: 두 번 모두 `✔ Validation passed`
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add .claude-plugin/marketplace.json plugins/brownfield-navigator/.claude-plugin/plugin.json
+git commit -F - <<'EOF'
+chore: 마켓플레이스와 플러그인 매니페스트 추가
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Hpd4mB4Q7hB6xWvD76iD5k
+EOF
+```
+
+---
+
+### Task 2: 테스트 도구
+
+**Files:**
+- Create: `plugins/brownfield-navigator/tests/test-helpers.sh`
+- Create: `plugins/brownfield-navigator/tests/run-all.sh`
+
+- [ ] **Step 1: 테스트 공용 도구 작성**
+
+`plugins/brownfield-navigator/tests/test-helpers.sh`
+
+````bash
+# 테스트 공용 도구: 단언, 테스트 실행, 픽스처 작성
+# bash 3.2 호환
+
+TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+PLUGIN_ROOT="$(cd "$TESTS_DIR/.." && pwd -P)"
+TEST_COUNT=0
+FAILED_TEST_COUNT=0
+CURRENT_TEST=""
+CURRENT_TEST_FAILED=0
+TEST_TMP=""
+
+fail_assertion() {
+  CURRENT_TEST_FAILED=1
+  printf 'FAIL %s\n     %s\n' "$CURRENT_TEST" "$1"
+}
+
+assert_equals() {
+  local expected="$1" actual="$2" label="$3"
+  [ "$expected" = "$actual" ] && return 0
+  fail_assertion "$label
+     기대: [$expected]
+     실제: [$actual]"
+}
+
+assert_contains() {
+  local haystack="$1" needle="$2" label="$3"
+  case "$haystack" in
+    *"$needle"*) return 0 ;;
+  esac
+  fail_assertion "$label
+     포함되어야 함: [$needle]
+     실제 출력:
+$haystack"
+}
+
+assert_not_contains() {
+  local haystack="$1" needle="$2" label="$3"
+  case "$haystack" in
+    *"$needle"*) fail_assertion "$label
+     포함되면 안 됨: [$needle]
+     실제 출력:
+$haystack" ;;
+  esac
+  return 0
+}
+
+assert_empty() {
+  local actual="$1" label="$2"
+  [ -z "$actual" ] && return 0
+  fail_assertion "$label
+     비어 있어야 함, 실제 출력:
+$actual"
+}
+
+# needle 이 haystack 에 정확히 expected_count 번 나오는지 확인
+assert_occurrence_count() {
+  local haystack="$1" needle="$2" expected_count="$3" label="$4"
+  local rest="$haystack" actual_count=0
+  while :; do
+    case "$rest" in
+      *"$needle"*)
+        actual_count=$((actual_count + 1))
+        rest="${rest#*"$needle"}"
+        ;;
+      *) break ;;
+    esac
+  done
+  assert_equals "$expected_count" "$actual_count" "$label"
+}
+
+# first 가 second 보다 앞에 나오는지 확인
+assert_order() {
+  local haystack="$1" first="$2" second="$3" label="$4"
+  local before_first="${haystack%%"$first"*}"
+  local before_second="${haystack%%"$second"*}"
+  if [ "$before_first" = "$haystack" ] || [ "$before_second" = "$haystack" ]; then
+    fail_assertion "$label (둘 중 하나가 출력에 없음: [$first] [$second])"
+    return 0
+  fi
+  [ "${#before_first}" -lt "${#before_second}" ] && return 0
+  fail_assertion "$label ([$first] 가 [$second] 보다 앞에 있어야 함)"
+}
+
+# 테스트 함수 하나를 새 임시 디렉터리에서 실행
+run_test() {
+  CURRENT_TEST="$1"
+  CURRENT_TEST_FAILED=0
+  TEST_COUNT=$((TEST_COUNT + 1))
+  TEST_TMP="$(mktemp -d "${TMPDIR:-/tmp}/bn-test.XXXXXX")"
+  TEST_TMP="$(cd "$TEST_TMP" && pwd -P)"
+  "$1"
+  rm -rf "$TEST_TMP"
+  if [ "$CURRENT_TEST_FAILED" = 0 ]; then
+    printf 'ok   %s\n' "$1"
+  else
+    FAILED_TEST_COUNT=$((FAILED_TEST_COUNT + 1))
+  fi
+}
+
+finish_tests() {
+  printf '\n%s: %d개 중 %d개 실패\n' "$(basename "$0")" "$TEST_COUNT" "$FAILED_TEST_COUNT"
+  [ "$FAILED_TEST_COUNT" = 0 ]
+}
+
+# 인자 한 개를 한 줄로 파일에 씀 (상위 디렉터리 자동 생성)
+write_lines() {
+  local file_path="$1"
+  shift
+  mkdir -p "$(dirname "$file_path")"
+  printf '%s\n' "$@" > "$file_path"
+}
+
+# origin remote가 설정된 빈 git 레포를 만듦
+make_git_repo() {
+  local repo_dir="$1" remote_url="$2"
+  mkdir -p "$repo_dir"
+  git -C "$repo_dir" init -q
+  git -C "$repo_dir" remote add origin "$remote_url"
+}
+````
+
+- [ ] **Step 2: 전체 실행 스크립트 작성**
+
+`plugins/brownfield-navigator/tests/run-all.sh`
+
+````bash
+#!/usr/bin/env bash
+# 모든 테스트 파일을 실행. 하나라도 실패하면 종료 코드 1
+# 사용법: bash plugins/brownfield-navigator/tests/run-all.sh
+
+TESTS_DIR="$(cd "$(dirname "$0")" && pwd -P)"
+overall_status=0
+for test_file in "$TESTS_DIR"/*.test.sh; do
+  [ -f "$test_file" ] || continue
+  "$BASH" "$test_file" || overall_status=1
+  printf '\n'
+done
+exit "$overall_status"
+````
+
+- [ ] **Step 3: 실행 권한 부여와 빈 실행 확인**
+
+실행: `chmod +x plugins/brownfield-navigator/tests/run-all.sh && bash plugins/brownfield-navigator/tests/run-all.sh; echo "exit=$?"`
+기대: 테스트 파일이 아직 없으므로 `exit=0`만 출력
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add plugins/brownfield-navigator/tests/test-helpers.sh plugins/brownfield-navigator/tests/run-all.sh
+git commit -F - <<'EOF'
+test: bash 3.2 호환 테스트 도구 추가
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Hpd4mB4Q7hB6xWvD76iD5k
+EOF
+```
+
+---
+
+### Task 3: frontmatter 파싱 (`lib/profile.sh`)
+
+**Files:**
+- Create: `plugins/brownfield-navigator/lib/profile.sh`
+- Test: `plugins/brownfield-navigator/tests/profile.test.sh`
+
+- [ ] **Step 1: 실패하는 테스트 작성**
+
+`plugins/brownfield-navigator/tests/profile.test.sh`
+
+````bash
+# lib/profile.sh 테스트
+. "$(cd "$(dirname "$0")" && pwd -P)/test-helpers.sh"
+. "$PLUGIN_ROOT/lib/profile.sh"
+
+test_parses_apply_and_block_lists() {
+  write_lines "$TEST_TMP/profile.md" \
+    "---" \
+    "apply: suggest" \
+    "match-remotes:" \
+    '  - "*acme/*"' \
+    "  - *acme-mirror/*   # 주석은 무시" \
+    "match-paths:" \
+    "- ~/work/acme" \
+    "---" \
+    "## [rule] 본문"
+  local parsed
+  parsed="$(parse_profile_frontmatter "$TEST_TMP/profile.md")"
+  assert_equals "apply=suggest
+remote=*acme/*
+remote=*acme-mirror/*
+path=~/work/acme" "$parsed" "apply와 블록 리스트 항목을 따옴표, 주석 없이 출력"
+}
+
+test_accepts_empty_list_and_comment_lines() {
+  write_lines "$TEST_TMP/profile.md" \
+    "---" \
+    "# 매칭 조건" \
+    "" \
+    "match-remotes: []" \
+    "match-paths:" \
+    '  - "~/work/*"' \
+    "---"
+  assert_equals "path=~/work/*" "$(parse_profile_frontmatter "$TEST_TMP/profile.md")" "빈 리스트와 주석 줄 처리"
+}
+
+test_fails_without_frontmatter() {
+  write_lines "$TEST_TMP/profile.md" "## [rule] 본문"
+  assert_contains "$(parse_profile_frontmatter "$TEST_TMP/profile.md")" "error=frontmatter 없음" "첫 줄이 --- 가 아니면 실패"
+}
+
+test_fails_on_empty_file() {
+  : > "$TEST_TMP/profile.md"
+  assert_contains "$(parse_profile_frontmatter "$TEST_TMP/profile.md")" "error=frontmatter 없음" "빈 파일은 실패"
+}
+
+test_fails_without_closing_delimiter() {
+  write_lines "$TEST_TMP/profile.md" "---" "apply: auto"
+  assert_contains "$(parse_profile_frontmatter "$TEST_TMP/profile.md")" "error=닫는 --- 없음" "닫는 --- 가 없으면 실패"
+}
+
+test_fails_on_invalid_apply() {
+  write_lines "$TEST_TMP/profile.md" "---" "apply: always" "---"
+  assert_contains "$(parse_profile_frontmatter "$TEST_TMP/profile.md")" "error=apply 값은" "허용되지 않는 apply 값은 실패"
+}
+
+test_fails_on_flow_list() {
+  write_lines "$TEST_TMP/profile.md" "---" 'match-remotes: ["*acme/*"]' "---"
+  assert_contains "$(parse_profile_frontmatter "$TEST_TMP/profile.md")" "error=match-remotes 는 블록 리스트만 지원함" "flow 리스트는 실패"
+}
+
+test_warns_on_unsupported_key() {
+  write_lines "$TEST_TMP/profile.md" "---" "name: acme" "apply: auto" "---"
+  local parsed
+  parsed="$(parse_profile_frontmatter "$TEST_TMP/profile.md")"
+  assert_contains "$parsed" "warning=지원하지 않는 키 무시: name" "지원하지 않는 키는 경고"
+  assert_contains "$parsed" "apply=auto" "경고 뒤에도 파싱 계속"
+  assert_not_contains "$parsed" "error=" "지원하지 않는 키는 실패가 아님"
+}
+
+test_reads_reference_description() {
+  write_lines "$TEST_TMP/ref.md" "---" 'description: "레포 지도"' "---" "본문"
+  assert_equals "레포 지도" "$(read_reference_description "$TEST_TMP/ref.md")" "description 값 추출"
+}
+
+test_reference_without_description_is_empty() {
+  write_lines "$TEST_TMP/ref.md" "# 제목만 있음"
+  assert_empty "$(read_reference_description "$TEST_TMP/ref.md")" "frontmatter가 없으면 빈 출력"
+}
+
+run_test test_parses_apply_and_block_lists
+run_test test_accepts_empty_list_and_comment_lines
+run_test test_fails_without_frontmatter
+run_test test_fails_on_empty_file
+run_test test_fails_without_closing_delimiter
+run_test test_fails_on_invalid_apply
+run_test test_fails_on_flow_list
+run_test test_warns_on_unsupported_key
+run_test test_reads_reference_description
+run_test test_reference_without_description_is_empty
+finish_tests
+````
+
+- [ ] **Step 2: 테스트를 실행해 실패 확인**
+
+실행: `bash plugins/brownfield-navigator/tests/profile.test.sh; echo "exit=$?"`
+기대: `lib/profile.sh: No such file or directory`, 마지막 줄 `profile.test.sh: 10개 중 9개 실패`, `exit=1`
+
+- [ ] **Step 3: 구현 작성**
+
+`plugins/brownfield-navigator/lib/profile.sh`
+
+````bash
+# 프로필 파일 읽기: frontmatter 파싱, 참고 파일 description 추출
+# bash 3.2 호환
+
+# 조직 프로필과 프로젝트 파일의 frontmatter를 한 줄에 하나씩 출력
+#   apply=<auto|suggest|off>
+#   remote=<패턴>
+#   path=<패턴>
+#   warning=<메시지>  파일은 계속 사용
+#   error=<메시지>    파싱 실패, 파일을 쓰지 않음
+parse_profile_frontmatter() {
+  local profile_file="$1"
+  awk '
+    function trim(text) {
+      sub(/^[[:space:]]+/, "", text)
+      sub(/[[:space:]]+$/, "", text)
+      return text
+    }
+    function strip_comment(text) {
+      sub(/[[:space:]]+#.*$/, "", text)
+      return text
+    }
+    function fail(message) {
+      print "error=" message
+      failed = 1
+      exit
+    }
+    NR == 1 {
+      if ($0 != "---") fail("frontmatter 없음 (첫 줄이 ---가 아님)")
+      in_frontmatter = 1
+      next
+    }
+    in_frontmatter {
+      if ($0 == "---") { closed = 1; exit }
+      if ($0 ~ /^[[:space:]]*(#.*)?$/) next
+      if ($0 ~ /^[[:space:]]*-[[:space:]]/) {
+        if (list_kind == "") fail("어느 키의 리스트 항목인지 알 수 없음: " trim($0))
+        item = $0
+        sub(/^[[:space:]]*-[[:space:]]+/, "", item)
+        item = trim(strip_comment(item))
+        if (item ~ /^".*"$/) item = substr(item, 2, length(item) - 2)
+        if (item != "") print list_kind "=" item
+        next
+      }
+      if (match($0, /^[A-Za-z0-9_-]+:/)) {
+        key = substr($0, 1, RLENGTH - 1)
+        value = trim(strip_comment(substr($0, RLENGTH + 1)))
+        list_kind = ""
+        if (key == "apply") {
+          if (value !~ /^(auto|suggest|off)$/) fail("apply 값은 auto, suggest, off 중 하나여야 함: " value)
+          print "apply=" value
+        } else if (key == "match-remotes" || key == "match-paths") {
+          if (value == "") list_kind = (key == "match-remotes") ? "remote" : "path"
+          else if (value != "[]") fail(key " 는 블록 리스트만 지원함: " value)
+        } else {
+          print "warning=지원하지 않는 키 무시: " key
+        }
+        next
+      }
+      fail("해석할 수 없는 줄: " trim($0))
+    }
+    END {
+      if (failed || closed) exit
+      if (NR == 0) print "error=frontmatter 없음 (빈 파일)"
+      else print "error=닫는 --- 없음"
+    }
+  ' "$profile_file"
+}
+
+# 참고 파일 frontmatter의 description 값을 출력 (없으면 빈 출력)
+read_reference_description() {
+  local reference_file="$1"
+  awk '
+    NR == 1 { if ($0 != "---") exit; next }
+    $0 == "---" { exit }
+    /^description:/ {
+      value = substr($0, length("description:") + 1)
+      sub(/^[[:space:]]+/, "", value)
+      sub(/[[:space:]]+$/, "", value)
+      if (value ~ /^".*"$/) value = substr(value, 2, length(value) - 2)
+      print value
+      exit
+    }
+  ' "$reference_file"
+}
+````
+
+- [ ] **Step 4: 테스트를 실행해 통과 확인**
+
+실행: `bash plugins/brownfield-navigator/tests/profile.test.sh; echo "exit=$?"`
+기대: `ok` 10줄, `profile.test.sh: 10개 중 0개 실패`, `exit=0`
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add plugins/brownfield-navigator/lib/profile.sh plugins/brownfield-navigator/tests/profile.test.sh
+git commit -F - <<'EOF'
+feat: 프로필 frontmatter 파싱 추가
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Hpd4mB4Q7hB6xWvD76iD5k
+EOF
+```
+
+---
+
+### Task 4: 매칭 (`lib/match.sh`)
+
+**Files:**
+- Create: `plugins/brownfield-navigator/lib/match.sh`
+- Test: `plugins/brownfield-navigator/tests/match.test.sh`
+
+- [ ] **Step 1: 실패하는 테스트 작성**
+
+`plugins/brownfield-navigator/tests/match.test.sh`
+
+````bash
+# lib/match.sh 테스트
+. "$(cd "$(dirname "$0")" && pwd -P)/test-helpers.sh"
+. "$PLUGIN_ROOT/lib/match.sh"
+
+test_normalizes_remote_url() {
+  assert_equals "git@github.com:acme/app" "$(normalize_remote_url "git@github.com:acme/app.git")" ".git 제거"
+  assert_equals "https://github.com/acme/app" "$(normalize_remote_url "https://github.com/acme/app/")" "끝 / 제거"
+  assert_equals "https://github.com/acme/app" "$(normalize_remote_url "https://github.com/acme/app.git/")" ".git/ 제거"
+}
+
+test_lists_normalized_remotes() {
+  make_git_repo "$TEST_TMP/repo" "git@github.com:acme/app.git"
+  git -C "$TEST_TMP/repo" remote add mirror "https://github.com/acme/app"
+  assert_equals "git@github.com:acme/app
+https://github.com/acme/app" "$(list_remote_urls "$TEST_TMP/repo")" "모든 remote를 정규화해 출력"
+}
+
+test_lists_nothing_outside_git() {
+  mkdir -p "$TEST_TMP/plain"
+  assert_empty "$(list_remote_urls "$TEST_TMP/plain")" "git 레포가 아니면 빈 출력"
+}
+
+test_expands_home_prefix() {
+  assert_equals "$HOME/work/*" "$(expand_home_prefix "~/work/*")" "~/ 확장"
+  assert_equals "$HOME" "$(expand_home_prefix "~")" "~ 단독 확장"
+  assert_equals "/opt/*" "$(expand_home_prefix "/opt/*")" "~ 없으면 그대로"
+}
+
+test_path_matches_self_and_ancestors() {
+  path_or_ancestor_matches "/work/acme/app" "/work/acme/app" || fail_assertion "자기 자신과 일치"
+  path_or_ancestor_matches "/work/acme/app/src/deep" "/work/acme/app" || fail_assertion "하위 디렉터리에서 상위 경로와 일치"
+  path_or_ancestor_matches "/work/acme/app" "/work/acme/*" || fail_assertion "글롭이 레포 디렉터리와 일치"
+  if path_or_ancestor_matches "/work/acme" "/work/acme/*"; then fail_assertion "상위 디렉터리 자체는 /* 글롭과 불일치"; fi
+  if path_or_ancestor_matches "/work/other/app" "/work/acme/*"; then fail_assertion "다른 경로는 불일치"; fi
+}
+
+test_match_reason_by_remote() {
+  printf '%s\n' "path=/nowhere" "remote=*acme/*" > "$TEST_TMP/parsed"
+  printf '%s\n' "git@github.com:acme/app" > "$TEST_TMP/remotes"
+  assert_equals "remote git@github.com:acme/app" \
+    "$(print_match_reason "$TEST_TMP/parsed" "$TEST_TMP/remotes" "$TEST_TMP")" "remote 조건 근거 출력"
+}
+
+test_match_reason_by_path() {
+  mkdir -p "$TEST_TMP/work/app/src"
+  printf '%s\n' "path=$TEST_TMP/work/*" > "$TEST_TMP/parsed"
+  : > "$TEST_TMP/remotes"
+  assert_equals "path $TEST_TMP/work/*" \
+    "$(print_match_reason "$TEST_TMP/parsed" "$TEST_TMP/remotes" "$TEST_TMP/work/app/src")" "경로 조건 근거 출력"
+}
+
+test_no_match_returns_failure() {
+  printf '%s\n' "remote=*acme/*" > "$TEST_TMP/parsed"
+  printf '%s\n' "git@github.com:other/app" > "$TEST_TMP/remotes"
+  if print_match_reason "$TEST_TMP/parsed" "$TEST_TMP/remotes" "$TEST_TMP" >/dev/null; then
+    fail_assertion "조건이 맞지 않으면 실패 반환"
+  fi
+}
+
+run_test test_normalizes_remote_url
+run_test test_lists_normalized_remotes
+run_test test_lists_nothing_outside_git
+run_test test_expands_home_prefix
+run_test test_path_matches_self_and_ancestors
+run_test test_match_reason_by_remote
+run_test test_match_reason_by_path
+run_test test_no_match_returns_failure
+finish_tests
+````
+
+- [ ] **Step 2: 테스트를 실행해 실패 확인**
+
+실행: `bash plugins/brownfield-navigator/tests/match.test.sh; echo "exit=$?"`
+기대: `lib/match.sh: No such file or directory`, 마지막 줄 `match.test.sh: 8개 중 6개 실패`, `exit=1`
+
+- [ ] **Step 3: 구현 작성**
+
+`plugins/brownfield-navigator/lib/match.sh`
+
+````bash
+# 대상 디렉터리와 프로필 매칭 조건 비교
+# bash 3.2 호환
+
+# remote URL 끝의 / 와 .git 을 떼어 비교할 수 있는 형태로 만듦
+normalize_remote_url() {
+  local url="$1"
+  url="${url%/}"
+  url="${url%.git}"
+  printf '%s\n' "$url"
+}
+
+# 대상 디렉터리의 git remote URL을 정규화해 한 줄에 하나씩 출력 (git이 없거나 레포가 아니면 빈 출력)
+list_remote_urls() {
+  local target_dir="$1" url
+  command -v git >/dev/null 2>&1 || return 0
+  git -C "$target_dir" remote -v 2>/dev/null | awk '{ print $2 }' | sort -u |
+    while IFS= read -r url; do
+      normalize_remote_url "$url"
+    done
+}
+
+# 패턴 앞머리의 ~ 를 홈 경로로 바꿈
+expand_home_prefix() {
+  local pattern="$1"
+  case "$pattern" in
+    "~") printf '%s\n' "$HOME" ;;
+    "~/"*) printf '%s/%s\n' "$HOME" "${pattern#"~/"}" ;;
+    *) printf '%s\n' "$pattern" ;;
+  esac
+}
+
+# 대상 경로 또는 그 상위 디렉터리 중 하나가 패턴과 일치하면 성공
+path_or_ancestor_matches() {
+  local candidate="$1" pattern="$2"
+  while :; do
+    [[ "$candidate" == $pattern ]] && return 0
+    [ "$candidate" = "/" ] && return 1
+    candidate="$(dirname "$candidate")"
+  done
+}
+
+# 파싱 결과의 remote, path 조건으로 매칭을 판정하고 매칭되면 근거를 출력
+#   $1 파싱 결과 파일  $2 remote URL 목록 파일  $3 대상 디렉터리
+print_match_reason() {
+  local parsed_file="$1" remotes_file="$2" target_dir="$3"
+  local kind pattern remote_url
+  while IFS='=' read -r kind pattern; do
+    case "$kind" in
+      remote)
+        while IFS= read -r remote_url; do
+          if [[ "$remote_url" == $pattern ]]; then
+            printf 'remote %s\n' "$remote_url"
+            return 0
+          fi
+        done < "$remotes_file"
+        ;;
+      path)
+        if path_or_ancestor_matches "$target_dir" "$(expand_home_prefix "$pattern")"; then
+          printf 'path %s\n' "$pattern"
+          return 0
+        fi
+        ;;
+    esac
+  done < "$parsed_file"
+  return 1
+}
+````
+
+- [ ] **Step 4: 테스트를 실행해 통과 확인**
+
+실행: `bash plugins/brownfield-navigator/tests/match.test.sh; echo "exit=$?"`
+기대: `match.test.sh: 8개 중 0개 실패`, `exit=0`
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add plugins/brownfield-navigator/lib/match.sh plugins/brownfield-navigator/tests/match.test.sh
+git commit -F - <<'EOF'
+feat: remote와 경로 조건 매칭 추가
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Hpd4mB4Q7hB6xWvD76iD5k
+EOF
+```
+
+---
+
+### Task 5: 규칙 섹션 병합 (`lib/sections.sh`)
+
+**Files:**
+- Create: `plugins/brownfield-navigator/lib/sections.sh`
+- Test: `plugins/brownfield-navigator/tests/sections.test.sh`
+
+- [ ] **Step 1: 실패하는 테스트 작성**
+
+`plugins/brownfield-navigator/tests/sections.test.sh`
+
+````bash
+# lib/sections.sh 테스트
+. "$(cd "$(dirname "$0")" && pwd -P)/test-helpers.sh"
+. "$PLUGIN_ROOT/lib/sections.sh"
+
+test_extracts_only_id_sections() {
+  write_lines "$TEST_TMP/rules.md" \
+    "---" \
+    "name: sample" \
+    "## [not-a-rule] frontmatter 안" \
+    "---" \
+    "# 제목" \
+    "소개 문단" \
+    "## 설명용 섹션" \
+    "무시되는 본문" \
+    "## [first-rule] 첫 규칙" \
+    "첫 본문" \
+    "" \
+    "## [second-rule] 둘째 규칙" \
+    '```markdown' \
+    "## [inside-code] 코드 블록 안" \
+    '```' \
+    "둘째 본문"
+  extract_rule_sections "$TEST_TMP/rules.md" "$TEST_TMP/layer"
+  assert_equals "first-rule
+second-rule" "$(cat "$TEST_TMP/layer/ids")" "id 섹션만 등장 순서대로"
+  assert_equals "첫 규칙" "$(cat "$TEST_TMP/layer/first-rule.title")" "제목 추출"
+  assert_equals "첫 본문" "$(cat "$TEST_TMP/layer/first-rule.body")" "본문 추출"
+  assert_contains "$(cat "$TEST_TMP/layer/second-rule.body")" "## [inside-code] 코드 블록 안" "코드 블록 안 헤딩은 본문으로 유지"
+}
+
+test_merges_layers_in_place() {
+  write_lines "$TEST_TMP/core.md" "## [alpha] 코어 알파" "코어 알파 본문" "## [beta] 코어 베타" "코어 베타 본문"
+  write_lines "$TEST_TMP/project.md" "## [alpha] 프로젝트 알파" "프로젝트 알파 본문" "## [gamma] 프로젝트 감마" "감마 본문"
+  extract_rule_sections "$TEST_TMP/core.md" "$TEST_TMP/core"
+  extract_rule_sections "$TEST_TMP/project.md" "$TEST_TMP/project"
+  merge_rule_layer "$TEST_TMP/core" "코어" "$TEST_TMP/merged"
+  merge_rule_layer "$TEST_TMP/project" "프로젝트: app" "$TEST_TMP/merged"
+  local output
+  output="$(print_merged_sections "$TEST_TMP/merged")"
+  assert_contains "$output" "## [alpha] 프로젝트 알파 (프로젝트: app)" "같은 id는 교체한 층의 제목과 출처"
+  assert_occurrence_count "$output" "## [alpha]" 1 "교체된 id는 한 번만 출력"
+  assert_contains "$output" "프로젝트 알파 본문" "교체한 층의 본문"
+  assert_not_contains "$output" "코어 알파 본문" "교체된 본문은 빠짐"
+  assert_order "$output" "## [alpha]" "## [beta]" "교체된 섹션은 원래 자리 유지"
+  assert_order "$output" "## [beta]" "## [gamma]" "새 id는 끝에 추가"
+  assert_contains "$output" "## [beta] 코어 베타 (코어)" "교체되지 않은 섹션은 원래 출처"
+}
+
+test_prints_heading_without_title() {
+  write_lines "$TEST_TMP/rules.md" "## [bare]" "본문"
+  extract_rule_sections "$TEST_TMP/rules.md" "$TEST_TMP/layer"
+  merge_rule_layer "$TEST_TMP/layer" "개인" "$TEST_TMP/merged"
+  assert_contains "$(print_merged_sections "$TEST_TMP/merged")" "## [bare] (개인)" "제목이 없으면 id와 출처만"
+}
+
+run_test test_extracts_only_id_sections
+run_test test_merges_layers_in_place
+run_test test_prints_heading_without_title
+finish_tests
+````
+
+- [ ] **Step 2: 테스트를 실행해 실패 확인**
+
+실행: `bash plugins/brownfield-navigator/tests/sections.test.sh; echo "exit=$?"`
+기대: `lib/sections.sh: No such file or directory`, 마지막 줄 `sections.test.sh: 3개 중 3개 실패`, `exit=1`
+
+- [ ] **Step 3: 구현 작성**
+
+`plugins/brownfield-navigator/lib/sections.sh`
+
+````bash
+# 규칙 섹션(## [id] 제목) 추출, 층 병합, 출력
+# bash 3.2 호환 (연관 배열 대신 id별 파일 사용)
+
+# 마크다운 파일의 ## [id] 섹션을 id별 파일로 나눔
+#   <출력 디렉터리>/ids          등장 순서대로 id 목록
+#   <출력 디렉터리>/<id>.title   헤딩의 제목 부분
+#   <출력 디렉터리>/<id>.body    헤딩 다음 줄부터 다음 ## 헤딩 전까지
+# frontmatter, id 없는 ## 섹션, 첫 ## 헤딩 이전 내용은 건너뜀
+# 코드 블록 안의 ## 줄은 헤딩으로 보지 않음
+extract_rule_sections() {
+  local markdown_file="$1" output_dir="$2"
+  mkdir -p "$output_dir"
+  : > "$output_dir/ids"
+  awk -v output_dir="$output_dir" '
+    NR == 1 && $0 == "---" { in_frontmatter = 1; next }
+    in_frontmatter { if ($0 == "---") in_frontmatter = 0; next }
+    /^```/ { in_code_block = !in_code_block }
+    !in_code_block && /^## / {
+      if (body_file != "") close(body_file)
+      body_file = ""
+      if (match($0, /^## \[[a-z0-9-]+\]/)) {
+        section_id = substr($0, 5, RLENGTH - 5)
+        title = substr($0, RLENGTH + 1)
+        sub(/^[[:space:]]+/, "", title)
+        title_file = output_dir "/" section_id ".title"
+        print title > title_file
+        close(title_file)
+        body_file = output_dir "/" section_id ".body"
+        printf "" > body_file
+        close(body_file)
+        if (!(section_id in seen)) {
+          seen[section_id] = 1
+          print section_id >> (output_dir "/ids")
+        }
+      }
+      next
+    }
+    body_file != "" { print >> body_file }
+  ' "$markdown_file"
+}
+
+# 한 층의 섹션을 병합 결과에 반영. 같은 id는 제자리에서 교체하고 새 id는 끝에 추가
+#   $1 층 디렉터리 (extract_rule_sections 결과)  $2 출처 표기  $3 병합 디렉터리
+merge_rule_layer() {
+  local layer_dir="$1" source_label="$2" merged_dir="$3" section_id
+  mkdir -p "$merged_dir"
+  touch "$merged_dir/order"
+  while IFS= read -r section_id; do
+    grep -qx -- "$section_id" "$merged_dir/order" || printf '%s\n' "$section_id" >> "$merged_dir/order"
+    cp "$layer_dir/$section_id.title" "$merged_dir/$section_id.title"
+    cp "$layer_dir/$section_id.body" "$merged_dir/$section_id.body"
+    printf '%s\n' "$source_label" > "$merged_dir/$section_id.source"
+  done < "$layer_dir/ids"
+}
+
+# 병합 결과를 병합 순서대로 출력. 헤딩 끝에 최종 출처를 붙임
+print_merged_sections() {
+  local merged_dir="$1" section_id title source_label
+  [ -f "$merged_dir/order" ] || return 0
+  while IFS= read -r section_id; do
+    title="$(cat "$merged_dir/$section_id.title")"
+    source_label="$(cat "$merged_dir/$section_id.source")"
+    if [ -n "$title" ]; then
+      printf '## [%s] %s (%s)\n' "$section_id" "$title" "$source_label"
+    else
+      printf '## [%s] (%s)\n' "$section_id" "$source_label"
+    fi
+    print_without_trailing_blank_lines "$merged_dir/$section_id.body"
+    printf '\n'
+  done < "$merged_dir/order"
+}
+
+print_without_trailing_blank_lines() {
+  awk '
+    { lines[NR] = $0 }
+    END {
+      last = NR
+      while (last > 0 && lines[last] ~ /^[[:space:]]*$/) last--
+      for (i = 1; i <= last; i++) print lines[i]
+    }
+  ' "$1"
+}
+````
+
+- [ ] **Step 4: 테스트를 실행해 통과 확인**
+
+실행: `bash plugins/brownfield-navigator/tests/sections.test.sh; echo "exit=$?"`
+기대: `sections.test.sh: 3개 중 0개 실패`, `exit=0`
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add plugins/brownfield-navigator/lib/sections.sh plugins/brownfield-navigator/tests/sections.test.sh
+git commit -F - <<'EOF'
+feat: 규칙 섹션 추출과 층 병합 추가
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Hpd4mB4Q7hB6xWvD76iD5k
+EOF
+```
+
+---
+
+### Task 6: 코어 스킬 (`skills/brownfield-navigator/SKILL.md`)
+
+Task 7의 compose-guide 테스트가 이 파일의 실제 코어 규칙(`guide-stance`, `comment-density`, `preserve-vs-decide`, `team-boundary`)을 기준으로 검증하므로 먼저 작성한다.
+
+**Files:**
+- Create: `plugins/brownfield-navigator/skills/brownfield-navigator/SKILL.md`
+
+- [ ] **Step 1: 코어 스킬 작성**
+
+`plugins/brownfield-navigator/skills/brownfield-navigator/SKILL.md`
+
+````markdown
+---
+name: brownfield-navigator
+description: "레거시 코드베이스에서 회사 컨벤션과 기존 코드의 흐름을 따르는 작업 가이드를 불러온다. 사용자가 가이드 적용을 요청하거나, 세션 시작 때 brownfield-navigator 가이드가 주입되지 않았는데 등록된 조직의 레포를 작업할 때 사용한다."
+---
+
+# Brownfield Navigator
+
+## 이 스킬이 하는 일
+
+기존 코드 위에서 기능을 넓히거나 유지보수할 때, 그 코드베이스와 조직이 이미 쌓아 온 방식을 따르도록 돕는 가이드다. 규칙은 네 층으로 나뉜다.
+
+| 층 | 내용 | 위치 |
+|---|---|---|
+| 코어 | 회사와 도구에 무관한 레거시 작업 원칙 | 이 파일의 `## [id]` 섹션 |
+| 조직 | 회사 컨벤션 | `~/.claude/brownfield-navigator/orgs/<조직>/profile.md` |
+| 개인 | Claude와 일하는 방식에 대한 개인 선호 | `~/.claude/brownfield-navigator/personal.md` |
+| 프로젝트 | 특정 레포에서만 달라지는 규칙 | `~/.claude/brownfield-navigator/orgs/<조직>/projects/<이름>.md` |
+
+같은 id의 규칙은 코어, 조직, 개인, 프로젝트 순으로 뒤의 층이 대체한다. 세션 시작 훅이 작업 디렉터리에 맞는 프로필을 찾아 병합한 가이드를 주입한다.
+
+강제 장치가 아니라 가이드다. 사용자의 현재 지시, CLAUDE.md, 프로젝트 메모리가 가이드보다 우선한다.
+
+## 호출되었을 때
+
+1. 세션 컨텍스트에 `# brownfield-navigator 가이드`로 시작하는 병합된 가이드가 이미 있으면 추가로 할 일은 없다. 그 가이드대로 작업을 계속한다. 불러올 수 있다는 한 줄 안내만 있는 경우는 여기에 해당하지 않는다
+2. 작업 대상 경로를 정한다. 사용자가 레포나 경로를 말했으면 그 경로, 아니면 현재 작업 디렉터리다
+3. 아래 명령을 실행한다
+
+   ```bash
+   "${CLAUDE_PLUGIN_ROOT}/bin/compose-guide" --manual "<작업 대상 경로>"
+   ```
+
+4. 출력이 `# brownfield-navigator 가이드`로 시작하면 "<조직> 가이드를 이 세션에 적용함"이라고 한 줄로 알리고, 이후 작업에 그 가이드를 적용한다
+5. 병합된 가이드가 없으면 매칭되는 프로필이 없다고 알린다. 출력에 경고가 있으면 함께 전달한다. 그리고 두 가지를 제안한다
+   - 이번 세션에 이 파일의 코어 규칙만 적용하기
+   - `/brownfield-navigator:harvest-profile`로 프로젝트 메모리를 모아 이 레포를 프로필에 등록하기
+
+## [guide-stance] 가이드를 대하는 태도
+
+이 가이드는 기존 흐름을 이어가는 확장·유지보수 작업의 기본값이다.
+
+- 사용자가 새 구조, 실험, 컨벤션에서 벗어나는 작업을 원하면 그대로 따른다. 가이드와 어긋나는 지점만 한 번, 한 줄로 알리고 반복해서 권하지 않는다
+- 사용자가 "가이드 끄기"처럼 적용 중단을 요청하면 그 세션에서는 가이드를 적용하지 않는다
+
+**Why:** 컨벤션을 따르고 싶은 사용자를 돕는 도구이지, 모든 작업에 컨벤션을 강제하는 장치가 아니다.
+
+## [workflow-skill-conflict] 워크플로우 스킬과 부딪힐 때
+
+TDD, 계획 작성·실행 같은 워크플로우 스킬의 단계(커밋, 테스트 파일 작성, 문서 산출물 커밋)가 레포 관례나 이 가이드와 부딪히면 관례를 따른다. 건너뛰거나 바꾼 단계는 보고한다.
+
+**Why:** 범용 워크플로우는 레포 사정을 모른다. 테스트를 두지 않는 레포에 테스트 파일을 만들거나, 사용자가 직접 커밋하는 레포에서 자동으로 커밋하는 일이 생긴다.
+
+## [delegate-with-guide] 서브에이전트에 위임할 때
+
+서브에이전트에 작업을 맡길 때는 적용 중인 가이드 가운데 그 작업과 관련된 규칙(커밋 여부, 테스트 관례, 주석 형식, 네이밍 등)을 프롬프트에 함께 적는다.
+
+**Why:** 서브에이전트는 세션 시작 때 주입된 가이드를 받지 않는다.
+
+## [actual-tooling] 선언된 도구와 실제 도구
+
+`package.json` 스크립트나 설정 파일이 있다고 해서 그 도구가 실제로 동작한다는 뜻은 아니다.
+
+- 작업 전에 실제로 쓸 수 있는 검증 수단(타입체크, 빌드, 포매터, 테스트 실행)을 확인한다
+- 동작하지 않는 도구를 설치하거나 고치는 데 시간을 쓰지 않는다. 동작하지 않는다는 사실과 대신 쓴 검증 수단을 알린다
+
+**Why:** lint 스크립트는 있는데 도구가 설치되어 있지 않거나, 테스트 설정은 있는데 테스트를 쓰지 않는 레거시 레포가 흔하다.
+
+## [existing-pattern-first] 기존 사례 먼저
+
+에러 처리, 파일 위치, 네이밍, 디렉터리 구성, 상태 관리 방식은 코드베이스에서 기존 사례를 먼저 찾아 따른다. 코드베이스에 없는 추상화(새 에러 클래스, 새 레이어, 새 라이브러리)는 들이지 않고, 필요하다고 판단되면 먼저 제안한다.
+
+**Why:** 한 코드베이스에 같은 일을 하는 방식이 두 가지 생기면 다음 사람이 어느 쪽을 따라야 할지 모른다.
+
+## [existing-vocabulary] 기존 어휘 사용
+
+용어, 디자인 토큰 이름, 타입과 변수 이름은 코드베이스, 같은 백엔드나 디자인 시스템을 쓰는 자매 프로젝트, 팀 용어집에서 먼저 찾는다.
+
+- 없는 어휘를 새로 만들지 않는다
+- 표준 용어인지보다 이 팀이 아는 말인지가 기준이다. 확신이 없으면 명사를 만들지 말고 하는 일을 그대로 풀어 쓴다
+- 전문용어를 다른 전문용어로 바꾸는 것은 해결이 아니다
+
+**Why:** 읽는 사람이 모르는 단어는 이름값을 못 한다. 자매 프로젝트끼리 이름이 갈라지면 대조와 유지보수가 어려워진다.
+
+## [comment-density] 주석의 양과 어조
+
+주석의 밀도와 어조는 주변 코드에 맞춘다.
+
+- 코드가 이미 말하는 내용을 자연어로 반복하지 않는다
+- 고치는 사람이 실제로 빠질 함정과, 코드만 봐서는 알 수 없는 이유만 남긴다
+- 설계 배경 설명은 문서에 두고, 코드에는 필요한 "왜"만 한두 문장으로 둔다
+
+**Why:** 주변 톤과 어긋나는 장황한 주석은 리뷰에서 대부분 지워지고, 남으면 코드와 함께 낡는다.
+
+## [preserve-vs-decide] 보존과 결정을 구분
+
+기존 동작을 보존하는 수정과 새 동작을 정하는 수정을 구분한다. 새로 정해야 하는 동작이 생기면 구현 전에 먼저 묻는다.
+
+- 대상 예: 에러를 무시할지 재시도할지 중단할지, 모달을 띄울지와 그 문구, 기본값, 부분 실패 시 성공분을 유지할지
+- 물을 때는 "현재 동작 / 문제 지점 / 선택지"로 정리한다
+- 성격이 같은 결정은 묶어서 묻는다
+
+**Why:** 고장을 고치는 변경에 제품 결정이 조용히 섞이면 리뷰에서 걸러지지 않는다.
+
+## [stage-boundary] 단계를 섞지 않기
+
+여러 단계로 나눈 작업에서는 항목마다 "이번 변경이 현재 동작을 바꾸는가"를 먼저 따진다. 다음 단계에서야 의미가 생기는 판단은 이번 단계에 넣지 않고 미룬다.
+
+**Why:** 근거가 생기기 전에 미래 동작을 확정하게 되고, 리뷰 범위도 흐려진다.
+
+## [ideal-vs-current] 이상적인 구조와 현재 구조
+
+기본은 기존 구조를 따르는 것이다. 리팩토링이나 재설계 요청을 받으면 다음을 함께 제시하고 선택은 사용자에게 맡긴다.
+
+- 명세 기준으로 독립적이고 완결된 이상적인 구조
+- 기존 코드에 얹는 방식
+- 두 방식의 비용과 이득
+
+최소 수정으로 가더라도 이상적인 구조와의 차이는 명시한다. 바뀌는 이유가 다른 코드(서버 계약과 화면 판정 규칙 등)는 한 파일에 두지 않는다.
+
+**Why:** 기존 구조에 맞추는 것만 목표로 하면 우회 코드가 쌓여 의도가 흐려지고, 기존 구조를 무시하면 회귀 위험이 커진다. 사용자가 트레이드오프를 보고 판단해야 한다.
+
+## [respect-user-edits] 사용자의 수정 존중
+
+사용자가 고친 코드, 주석, 이름은 되돌리지 않는다.
+
+- 파일이 바뀌어 있으면 현재 상태가 기준이다
+- 계획이나 spec 문서의 코드는 실제 파일에 맞춰 갱신한다. 반대 방향으로 고치지 않는다
+- 사용자의 수정 때문에 사실과 달라진 부분(없어진 함수를 가리키는 주석 등)만 지적하고 고친다
+
+**Why:** 사용자는 코드를 직접 다듬으며 이해하고 정리한다. 원래 문구를 되살리면 그 과정을 되돌리게 된다.
+
+## [verify-premise] 구조 변경 전 전제 검증
+
+구조를 바꾸자고 권하기 전에 그 권고의 전제를 검증한다.
+
+- 문서나 인수인계의 결론만 믿지 않고, 그 결론을 뒷받침하는 동작 원리를 소스에서 확인한다
+- 타이밍이나 순서 실험은 실제 스택 그대로(상태 라이브러리, 빌드 모드 포함) 재현한다. 부품 하나를 빼면 결론이 뒤집힐 수 있다
+- 변경 이력(git log, git blame, 없으면 문서나 담당자)으로 원래 의도를 확인한다. 호출하는 곳이 없는 API는 의도가 아니라 흔적일 수 있다
+- 관측이나 로깅처럼 부수적인 목적의 작업이 구조 변경을 요구하면 전제가 틀렸다는 신호로 보고 멈춘 뒤, 현재 구조로 되는지부터 확인한다
+- 테스트 통과는 요구사항이 맞다는 증거가 아니다
+
+**Why:** 틀린 전제 하나가 설계, 구현, 문서 수정으로 번진다. 멈추는 계기가 검증이 아니라 사용자의 질문이 되기 쉽다.
+
+## [structural-evidence] 구조적 근거로 판정
+
+간헐적으로 나타나는 현상을 검증할 때 조건을 바꿔 가며 표본을 늘리지 않는다.
+
+1. 원인이 되는 구조가 제거됐는지 직접 측정한다
+2. 비교 대상이 실제로 반응한 A/B 측정 1회면 충분하다
+3. 이후 측정에서 비교 대상이 반응하지 않아도 앞의 A/B는 약해지지 않는다. 그 사실을 그대로 보고한다
+4. 결정론적인 증상과 타이밍에 의존하는 증상을 구분하고, 반복 측정은 결정론적인 증상에만 쓴다
+
+**Why:** 확률적인 현상은 표본을 늘려도 "이번엔 안 났다"만 반복되어 끝나지 않는다.
+
+## [doc-conflict] 문서끼리 어긋날 때
+
+1. 이 가이드에 그 주제의 우선순위 규칙이 있으면 따른다
+2. 문서의 성격을 구분한다. 계약 문서(API 스펙 등)는 주고받는 형태의 정본이고, 설계·기획 문서는 의도를 파악하고 미리 작업하기 위한 참고 자료다
+3. 성격이 같은 문서끼리는 최종 수정일이 늦은 쪽을 따른다. 취소선이나 남아 있는 옛 서술은 폐기된 내용일 수 있다
+4. 그래도 판정이 서지 않으면 양쪽 해석에서 같은 결과를 내는 구현이 있는지 먼저 찾고, 없으면 사용자에게 확인한다
+5. 실제 응답, 코드, 데이터로 확인할 수 있으면 그 결과가 최종이다
+
+**Why:** 설계 확정과 스펙 갱신 사이의 시차 때문에 문서 간 역전이 반복된다. 한쪽 문서만 보면 구현을 넣었다 뺐다 하게 된다.
+
+## [spec-import] 필드와 타입 반영
+
+상황에 따라 기준이 다르다.
+
+- **이미 다른 코드베이스에 정의된 계약을 옮길 때:** 필요한 부분만 추리지 않고 전체를 그대로 옮긴다(enum 멤버, 인터페이스 필드, 주석, 의존 타입). 같은 이름이 이미 있으면 덮어쓰지 않고 비교해서 보완한다. 값이 다르면 임의로 합치지 않고 알린다
+- **문서를 보고 새로 정의할 때:** 쓰는 곳이 있는지로 판단한다. 쓰는 곳이 있으면 문서나 응답에 아직 없어도 optional로 미리 넣는다(오지 않으면 undefined라 동작이 바뀌지 않는다). 쓰는 곳도 의미도 모르는 필드는 넣지 않는다
+
+**Why:** 일부만 옮긴 타입은 다음 사람에게 "왜 일부만 있지?"라는 혼란을 준다. 근거 없는 필드는 자동완성에 떠서 잘못 쓰인다.
+
+## [team-boundary] 다른 팀과의 경계
+
+- 다른 팀에 보내는 글에는 우리 쪽이 실제로 막힌 것만 적는다
+- 상대 팀의 설계, 마이그레이션 절차, 배포 순서는 우리 설계의 근거로 삼지 않고 훈수 대상으로도 삼지 않는다. 정착한 뒤의 결과 형태만 본다
+
+**Why:** 다른 팀의 내부 사정에 관여하면 소통 비용이 커지고, 그 팀의 중간 단계에 맞춘 구현은 금방 틀어진다.
+````
+
+- [ ] **Step 2: 규칙 id 추출 확인**
+
+실행:
+
+```bash
+bash -c '. plugins/brownfield-navigator/lib/sections.sh; d="$(mktemp -d)"; extract_rule_sections plugins/brownfield-navigator/skills/brownfield-navigator/SKILL.md "$d"; cat "$d/ids"; rm -rf "$d"'
+```
+
+기대: 아래 16줄이 이 순서로 출력 (`이 스킬이 하는 일`, `호출되었을 때`는 id가 없어 제외)
+
+```
+guide-stance
+workflow-skill-conflict
+delegate-with-guide
+actual-tooling
+existing-pattern-first
+existing-vocabulary
+comment-density
+preserve-vs-decide
+stage-boundary
+ideal-vs-current
+respect-user-edits
+verify-premise
+structural-evidence
+doc-conflict
+spec-import
+team-boundary
+```
+
+- [ ] **Step 3: 플러그인 검증**
+
+실행: `claude plugin validate plugins/brownfield-navigator`
+기대: `✔ Validation passed`
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add plugins/brownfield-navigator/skills/brownfield-navigator/SKILL.md
+git commit -F - <<'EOF'
+feat: 코어 규칙과 수동 호출 절차를 담은 brownfield-navigator 스킬 추가
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Hpd4mB4Q7hB6xWvD76iD5k
+EOF
+```
+
+---
+
+### Task 7: 가이드 합성 (`bin/compose-guide`)
+
+**Files:**
+- Create: `plugins/brownfield-navigator/bin/compose-guide`
+- Test: `plugins/brownfield-navigator/tests/compose-guide.test.sh`
+
+- [ ] **Step 1: 실패하는 테스트 작성**
+
+`plugins/brownfield-navigator/tests/compose-guide.test.sh`
+
+````bash
+# bin/compose-guide 시나리오 테스트
+. "$(cd "$(dirname "$0")" && pwd -P)/test-helpers.sh"
+
+run_compose_guide() {
+  BROWNFIELD_NAVIGATOR_HOME="$TEST_TMP/profiles" "$BASH" "$PLUGIN_ROOT/bin/compose-guide" "$@"
+}
+
+# 조직 프로필: frontmatter 줄을 인자로 받고, <조직>-rule 섹션 하나를 함께 작성
+write_org_profile() {
+  local org_name="$1"
+  shift
+  write_lines "$TEST_TMP/profiles/orgs/$org_name/profile.md" \
+    "---" "$@" "---" "" \
+    "## [$org_name-rule] $org_name 규칙" "$org_name 규칙 본문"
+}
+
+# 프로젝트 파일: frontmatter 줄 다음에 오는 인자는 "--" 뒤에 본문 줄로 받음
+write_project_file() {
+  local org_name="$1" project_name="$2" arg
+  shift 2
+  local file_path="$TEST_TMP/profiles/orgs/$org_name/projects/$project_name.md"
+  mkdir -p "$(dirname "$file_path")"
+  printf '%s\n' "---" > "$file_path"
+  while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do
+    printf '%s\n' "$1" >> "$file_path"
+    shift
+  done
+  printf '%s\n' "---" >> "$file_path"
+  [ "$#" -gt 0 ] && shift
+  for arg in "$@"; do
+    printf '%s\n' "$arg" >> "$file_path"
+  done
+}
+
+test_empty_without_profile_home() {
+  make_git_repo "$TEST_TMP/app" "git@github.com:acme/app.git"
+  assert_empty "$(run_compose_guide "$TEST_TMP/app")" "프로필 홈이 없으면 빈 출력"
+}
+
+test_empty_when_nothing_matches() {
+  write_org_profile acme "match-remotes:" '  - "*acme/*"'
+  make_git_repo "$TEST_TMP/app" "git@github.com:other/app.git"
+  assert_empty "$(run_compose_guide "$TEST_TMP/app")" "매칭되는 조직이 없으면 빈 출력"
+}
+
+test_merges_core_and_org_on_ssh_remote() {
+  write_org_profile acme "apply: auto" "match-remotes:" '  - "*acme/*"'
+  make_git_repo "$TEST_TMP/app" "git@github.com:acme/app.git"
+  local output
+  output="$(run_compose_guide "$TEST_TMP/app")"
+  assert_contains "$output" "# brownfield-navigator 가이드" "머리말"
+  assert_contains "$output" "- 조직: acme (근거: remote git@github.com:acme/app)" "매칭 근거"
+  assert_contains "$output" "## [guide-stance] 가이드를 대하는 태도 (코어)" "코어 섹션"
+  assert_contains "$output" "## [acme-rule] acme 규칙 (조직: acme)" "조직 섹션"
+  assert_order "$output" "## [team-boundary]" "## [acme-rule]" "조직의 새 id는 코어 뒤에 추가"
+  assert_not_contains "$output" "## 호출되었을 때" "코어의 id 없는 섹션은 제외"
+}
+
+test_matches_https_remote_with_trailing_slash() {
+  write_org_profile acme "match-remotes:" '  - "*acme/app"'
+  make_git_repo "$TEST_TMP/app" "https://github.com/acme/app.git/"
+  assert_contains "$(run_compose_guide "$TEST_TMP/app")" "근거: remote https://github.com/acme/app" "https remote 정규화 후 매칭"
+}
+
+test_matches_path_without_git_from_subdirectory() {
+  mkdir -p "$TEST_TMP/home/work/acme/app/src"
+  write_org_profile acme "match-paths:" '  - "~/work/acme/*"'
+  local output
+  output="$(HOME="$TEST_TMP/home" run_compose_guide "$TEST_TMP/home/work/acme/app/src")"
+  assert_contains "$output" "근거: path ~/work/acme/*" "git 없이 ~ 경로 조건으로 하위 디렉터리에서 매칭"
+}
+
+test_project_replaces_core_section_in_place() {
+  write_org_profile acme "match-remotes:" '  - "*acme/*"'
+  write_project_file acme app "match-remotes:" '  - "*acme/app"' -- \
+    "## [comment-density] 이 레포의 주석" "주석은 명사형으로 끝냄" \
+    "## [app-only] 앱 전용 규칙" "앱 전용 본문"
+  make_git_repo "$TEST_TMP/app" "git@github.com:acme/app.git"
+  local output
+  output="$(run_compose_guide "$TEST_TMP/app")"
+  assert_contains "$output" "- 프로젝트 파일: app" "머리말에 프로젝트 파일 표시"
+  assert_contains "$output" "## [comment-density] 이 레포의 주석 (프로젝트: app)" "같은 id는 프로젝트 제목과 출처로 교체"
+  assert_occurrence_count "$output" "## [comment-density]" 1 "교체된 id는 한 번만 출력"
+  assert_not_contains "$output" "주석의 밀도와 어조는 주변 코드에 맞춘다" "교체된 코어 본문은 빠짐"
+  assert_order "$output" "## [comment-density]" "## [preserve-vs-decide]" "교체된 섹션은 코어 자리 유지"
+  assert_order "$output" "## [acme-rule]" "## [app-only]" "프로젝트의 새 id는 끝에 추가"
+}
+
+test_personal_profile_only_when_merged() {
+  write_lines "$TEST_TMP/profiles/personal.md" "## [my-habit] 내 습관" "습관 본문"
+  write_org_profile acme "match-remotes:" '  - "*acme/*"'
+  write_org_profile beta "apply: suggest" "match-remotes:" '  - "*beta/*"'
+  make_git_repo "$TEST_TMP/acme-app" "git@github.com:acme/app.git"
+  make_git_repo "$TEST_TMP/beta-app" "git@github.com:beta/app.git"
+  assert_contains "$(run_compose_guide "$TEST_TMP/acme-app")" "## [my-habit] 내 습관 (개인)" "병합이 있으면 개인 프로필 포함"
+  assert_not_contains "$(run_compose_guide "$TEST_TMP/beta-app")" "my-habit" "suggest만 있으면 개인 프로필 제외"
+}
+
+test_suggest_and_off() {
+  write_org_profile beta "apply: suggest" "match-remotes:" '  - "*beta/*"'
+  write_org_profile gamma "apply: off" "match-remotes:" '  - "*gamma/*"'
+  make_git_repo "$TEST_TMP/beta-app" "git@github.com:beta/app.git"
+  make_git_repo "$TEST_TMP/gamma-app" "git@github.com:gamma/app.git"
+  local output
+  output="$(run_compose_guide "$TEST_TMP/beta-app")"
+  assert_contains "$output" "# brownfield-navigator 안내" "suggest는 안내 제목"
+  assert_contains "$output" "- beta 가이드를 적용할 수 있음. /brownfield-navigator:brownfield-navigator 로 불러오기" "suggest 안내문"
+  assert_not_contains "$output" "## [guide-stance]" "suggest는 규칙을 병합하지 않음"
+  assert_empty "$(run_compose_guide "$TEST_TMP/gamma-app")" "off는 출력 없음"
+}
+
+test_project_apply_overrides_org_apply() {
+  write_org_profile acme "apply: off" "match-remotes:" '  - "*acme/*"'
+  write_project_file acme app "apply: auto" "match-remotes:" '  - "*acme/app"'
+  write_org_profile beta "match-remotes:" '  - "*beta/*"'
+  write_project_file beta app "apply: off" "match-remotes:" '  - "*beta/app"'
+  make_git_repo "$TEST_TMP/acme-app" "git@github.com:acme/app.git"
+  make_git_repo "$TEST_TMP/beta-app" "git@github.com:beta/app.git"
+  assert_contains "$(run_compose_guide "$TEST_TMP/acme-app")" "# brownfield-navigator 가이드" "조직 off라도 프로젝트 auto면 병합"
+  assert_empty "$(run_compose_guide "$TEST_TMP/beta-app")" "조직 auto라도 프로젝트 off면 출력 없음"
+}
+
+test_multiple_projects_use_last_apply_and_warn() {
+  write_org_profile acme "match-remotes:" '  - "*acme/*"'
+  write_project_file acme a-first "apply: off" "match-remotes:" '  - "*acme/app"' -- "## [first-rule] 첫째" "본문"
+  write_project_file acme b-second "apply: auto" "match-remotes:" '  - "*acme/*"' -- "## [second-rule] 둘째" "본문"
+  make_git_repo "$TEST_TMP/app" "git@github.com:acme/app.git"
+  local output
+  output="$(run_compose_guide "$TEST_TMP/app")"
+  assert_contains "$output" "# brownfield-navigator 가이드" "이름순 마지막 프로젝트의 apply(auto) 사용"
+  assert_order "$output" "## [first-rule]" "## [second-rule]" "프로젝트 파일은 이름순으로 병합"
+  assert_contains "$output" "acme: 프로젝트 파일 2개가 함께 매칭됨" "여러 프로젝트 매칭 경고"
+}
+
+test_manual_mode_merges_suggest_and_off() {
+  write_org_profile beta "apply: suggest" "match-remotes:" '  - "*beta/*"'
+  write_org_profile gamma "apply: off" "match-remotes:" '  - "*gamma/*"'
+  make_git_repo "$TEST_TMP/beta-app" "git@github.com:beta/app.git"
+  make_git_repo "$TEST_TMP/gamma-app" "git@github.com:gamma/app.git"
+  assert_contains "$(run_compose_guide --manual "$TEST_TMP/beta-app")" "## [beta-rule] beta 규칙 (조직: beta)" "--manual은 suggest도 병합"
+  assert_contains "$(run_compose_guide --manual "$TEST_TMP/gamma-app")" "## [gamma-rule] gamma 규칙 (조직: gamma)" "--manual은 off도 병합"
+}
+
+test_warnings_only_when_nothing_matches() {
+  write_lines "$TEST_TMP/profiles/orgs/broken/profile.md" "apply: auto"
+  mkdir -p "$TEST_TMP/plain"
+  local output
+  output="$(run_compose_guide "$TEST_TMP/plain")"
+  assert_contains "$output" "## brownfield-navigator 경고" "경고 제목"
+  assert_contains "$output" "건너뜀 $TEST_TMP/profiles/orgs/broken/profile.md: frontmatter 없음" "파싱 실패 경고"
+  assert_not_contains "$output" "# brownfield-navigator 가이드" "매칭이 없으면 가이드 없음"
+}
+
+test_unsupported_key_warning_with_guide() {
+  write_org_profile acme "name: acme" "match-remotes:" '  - "*acme/*"'
+  make_git_repo "$TEST_TMP/app" "git@github.com:acme/app.git"
+  local output
+  output="$(run_compose_guide "$TEST_TMP/app")"
+  assert_contains "$output" "## [acme-rule]" "지원하지 않는 키가 있어도 병합"
+  assert_contains "$output" "profile.md: 지원하지 않는 키 무시: name" "지원하지 않는 키 경고"
+}
+
+test_two_auto_orgs_apply_first_only() {
+  write_org_profile acme "match-remotes:" '  - "*shared/*"'
+  write_org_profile beta "match-remotes:" '  - "*shared/*"'
+  make_git_repo "$TEST_TMP/app" "git@github.com:shared/app.git"
+  local output
+  output="$(run_compose_guide "$TEST_TMP/app")"
+  assert_contains "$output" "## [acme-rule]" "이름순 첫 조직 병합"
+  assert_not_contains "$output" "## [beta-rule]" "두 번째 조직은 병합하지 않음"
+  assert_contains "$output" "여러 조직이 매칭됨: acme, beta. acme 만 적용함" "여러 조직 매칭 경고"
+}
+
+test_lists_references() {
+  write_org_profile acme "match-remotes:" '  - "*acme/*"'
+  write_lines "$TEST_TMP/profiles/orgs/acme/references/repos.md" "---" "description: 레포 지도" "---" "본문"
+  write_lines "$TEST_TMP/profiles/orgs/acme/references/plain.md" "설명 없는 참고 파일"
+  make_git_repo "$TEST_TMP/app" "git@github.com:acme/app.git"
+  local output
+  output="$(run_compose_guide "$TEST_TMP/app")"
+  assert_contains "$output" "## 참고 파일" "참고 파일 제목"
+  assert_contains "$output" "- $TEST_TMP/profiles/orgs/acme/references/repos.md: 레포 지도" "description이 있는 참고 파일"
+  assert_contains "$output" "- $TEST_TMP/profiles/orgs/acme/references/plain.md
+" "description이 없으면 경로만"
+}
+
+run_test test_empty_without_profile_home
+run_test test_empty_when_nothing_matches
+run_test test_merges_core_and_org_on_ssh_remote
+run_test test_matches_https_remote_with_trailing_slash
+run_test test_matches_path_without_git_from_subdirectory
+run_test test_project_replaces_core_section_in_place
+run_test test_personal_profile_only_when_merged
+run_test test_suggest_and_off
+run_test test_project_apply_overrides_org_apply
+run_test test_multiple_projects_use_last_apply_and_warn
+run_test test_manual_mode_merges_suggest_and_off
+run_test test_warnings_only_when_nothing_matches
+run_test test_unsupported_key_warning_with_guide
+run_test test_two_auto_orgs_apply_first_only
+run_test test_lists_references
+finish_tests
+````
+
+- [ ] **Step 2: 테스트를 실행해 실패 확인**
+
+실행: `bash plugins/brownfield-navigator/tests/compose-guide.test.sh; echo "exit=$?"`
+기대: `bin/compose-guide: No such file or directory`, 마지막 줄 `compose-guide.test.sh: 15개 중 13개 실패`, `exit=1`
+
+- [ ] **Step 3: 구현 작성**
+
+`plugins/brownfield-navigator/bin/compose-guide`
+
+````bash
+#!/usr/bin/env bash
+# 대상 디렉터리에 맞는 조직·프로젝트 프로필을 찾아 brownfield-navigator 가이드를 출력
+#
+# 사용법: compose-guide [--manual] [대상 디렉터리]
+#   --manual  수동 호출용. apply 가 suggest, off 인 조직과 프로젝트도 병합
+#
+# 출력할 것이 없으면 빈 출력, 종료 코드는 항상 0
+# bash 3.2 호환 (macOS 기본 /bin/bash)
+
+set -u
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
+PLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
+CORE_SKILL_FILE="$PLUGIN_ROOT/skills/brownfield-navigator/SKILL.md"
+PROFILE_HOME="${BROWNFIELD_NAVIGATOR_HOME:-$HOME/.claude/brownfield-navigator}"
+SKILL_COMMAND="/brownfield-navigator:brownfield-navigator"
+
+. "$PLUGIN_ROOT/lib/profile.sh"
+. "$PLUGIN_ROOT/lib/match.sh"
+. "$PLUGIN_ROOT/lib/sections.sh"
+
+WORK_DIR=""
+TARGET_DIR=""
+
+add_warning() {
+  printf '%s\n' "$1" >> "$WORK_DIR/warnings"
+}
+
+# 프로필 파일을 파싱해 결과 파일에 저장. 실패하면 경고를 남기고 실패 반환
+parse_or_warn() {
+  local profile_file="$1" parsed_file="$2" error_message warning_message
+  parse_profile_frontmatter "$profile_file" > "$parsed_file"
+  error_message="$(sed -n 's/^error=//p' "$parsed_file" | head -n 1)"
+  if [ -n "$error_message" ]; then
+    add_warning "건너뜀 $profile_file: $error_message"
+    return 1
+  fi
+  sed -n 's/^warning=//p' "$parsed_file" | while IFS= read -r warning_message; do
+    add_warning "$profile_file: $warning_message"
+  done
+  return 0
+}
+
+read_apply_value() {
+  sed -n 's/^apply=//p' "$1" | tail -n 1
+}
+
+# 조직 하나를 매칭하고 적용 값에 따라 분류
+#   auto    $WORK_DIR/auto-orgs 에 "조직<TAB>매칭 근거" 추가
+#   suggest $WORK_DIR/suggest-orgs 에 조직 이름 추가
+# 매칭된 프로젝트 파일 경로는 $WORK_DIR/projects-<조직> 에 이름순으로 기록
+evaluate_org() {
+  local org_profile="$1" manual_mode="$2"
+  local org_dir org_name org_parsed match_reason matched_projects_file
+  local project_file project_name project_parsed project_apply apply_value matched_project_count
+
+  org_dir="$(dirname "$org_profile")"
+  org_name="$(basename "$org_dir")"
+  org_parsed="$WORK_DIR/org-$org_name.parsed"
+  parse_or_warn "$org_profile" "$org_parsed" || return 0
+  match_reason="$(print_match_reason "$org_parsed" "$WORK_DIR/remotes" "$TARGET_DIR")" || return 0
+
+  matched_projects_file="$WORK_DIR/projects-$org_name"
+  : > "$matched_projects_file"
+  project_apply=""
+  for project_file in "$org_dir"/projects/*.md; do
+    [ -f "$project_file" ] || continue
+    project_name="$(basename "$project_file" .md)"
+    project_parsed="$WORK_DIR/project-$org_name-$project_name.parsed"
+    parse_or_warn "$project_file" "$project_parsed" || continue
+    print_match_reason "$project_parsed" "$WORK_DIR/remotes" "$TARGET_DIR" >/dev/null || continue
+    printf '%s\n' "$project_file" >> "$matched_projects_file"
+    apply_value="$(read_apply_value "$project_parsed")"
+    if [ -n "$apply_value" ]; then
+      project_apply="$apply_value"
+    fi
+  done
+
+  matched_project_count="$(wc -l < "$matched_projects_file" | tr -d ' ')"
+  if [ "$matched_project_count" -ge 2 ]; then
+    add_warning "$org_name: 프로젝트 파일 ${matched_project_count}개가 함께 매칭됨. 이름순으로 모두 적용함"
+  fi
+
+  apply_value="$project_apply"
+  if [ -z "$apply_value" ]; then
+    apply_value="$(read_apply_value "$org_parsed")"
+  fi
+  if [ -z "$apply_value" ] || [ "$manual_mode" = 1 ]; then
+    apply_value="auto"
+  fi
+
+  case "$apply_value" in
+    auto) printf '%s\t%s\n' "$org_name" "$match_reason" >> "$WORK_DIR/auto-orgs" ;;
+    suggest) printf '%s\n' "$org_name" >> "$WORK_DIR/suggest-orgs" ;;
+  esac
+}
+
+# 파일의 줄들을 ", " 로 이어 한 줄로 출력
+join_lines() {
+  awk 'NR > 1 { printf ", " } { printf "%s", $0 } END { if (NR > 0) printf "\n" }' "$1"
+}
+
+print_header() {
+  local org_name="$1" match_reason="$2"
+  local matched_projects_file="$WORK_DIR/projects-$org_name"
+  printf '# brownfield-navigator 가이드\n\n'
+  printf -- '- 조직: %s (근거: %s)\n' "$org_name" "$match_reason"
+  if [ -s "$matched_projects_file" ]; then
+    printf -- '- 프로젝트 파일: %s\n' "$(sed 's#^.*/##; s#\.md$##' "$matched_projects_file" | join_lines /dev/stdin)"
+  fi
+  printf '\n'
+  printf '%s\n\n' "기존 코드의 흐름과 조직 컨벤션을 따르는 작업을 위한 기본 가이드다. 사용자가 다른 방식을 원하면 그쪽을 따르고, 가이드와 어긋나는 지점만 한 번 짧게 알린다."
+  printf '%s\n\n' "우선순위: 현재 사용자 지시 > CLAUDE.md > 프로젝트(프로젝트 파일, 프로젝트 메모리) > 개인 > 조직 > 코어. 같은 id의 규칙은 아래에 이미 이 순서로 병합되어 있다."
+}
+
+print_suggestions() {
+  local org_name
+  while IFS= read -r org_name; do
+    printf -- '- %s 가이드를 적용할 수 있음. %s 로 불러오기\n' "$org_name" "$SKILL_COMMAND"
+  done < "$WORK_DIR/suggest-orgs"
+  printf '\n'
+}
+
+print_rule_sections() {
+  local org_name="$1" project_file merged_dir="$WORK_DIR/merged"
+  extract_rule_sections "$CORE_SKILL_FILE" "$WORK_DIR/layer-core"
+  merge_rule_layer "$WORK_DIR/layer-core" "코어" "$merged_dir"
+  extract_rule_sections "$PROFILE_HOME/orgs/$org_name/profile.md" "$WORK_DIR/layer-org"
+  merge_rule_layer "$WORK_DIR/layer-org" "조직: $org_name" "$merged_dir"
+  if [ -f "$PROFILE_HOME/personal.md" ]; then
+    extract_rule_sections "$PROFILE_HOME/personal.md" "$WORK_DIR/layer-personal"
+    merge_rule_layer "$WORK_DIR/layer-personal" "개인" "$merged_dir"
+  fi
+  while IFS= read -r project_file; do
+    rm -rf "$WORK_DIR/layer-project"
+    extract_rule_sections "$project_file" "$WORK_DIR/layer-project"
+    merge_rule_layer "$WORK_DIR/layer-project" "프로젝트: $(basename "$project_file" .md)" "$merged_dir"
+  done < "$WORK_DIR/projects-$org_name"
+  print_merged_sections "$merged_dir"
+}
+
+print_references() {
+  local org_name="$1" reference_file description has_reference=0
+  for reference_file in "$PROFILE_HOME/orgs/$org_name"/references/*.md; do
+    [ -f "$reference_file" ] || continue
+    if [ "$has_reference" = 0 ]; then
+      printf '## 참고 파일\n\n관련 작업을 할 때 필요한 파일만 Read한다.\n\n'
+      has_reference=1
+    fi
+    description="$(read_reference_description "$reference_file")"
+    if [ -n "$description" ]; then
+      printf -- '- %s: %s\n' "$reference_file" "$description"
+    else
+      printf -- '- %s\n' "$reference_file"
+    fi
+  done
+  if [ "$has_reference" = 1 ]; then
+    printf '\n'
+  fi
+}
+
+print_warnings() {
+  local warning_message
+  printf '## brownfield-navigator 경고\n\n'
+  while IFS= read -r warning_message; do
+    printf -- '- %s\n' "$warning_message"
+  done < "$WORK_DIR/warnings"
+}
+
+main() {
+  local manual_mode=0 org_profile selected_org="" selected_reason="" auto_org_count
+
+  if [ "${1:-}" = "--manual" ]; then
+    manual_mode=1
+    shift
+  fi
+  TARGET_DIR="$(cd "${1:-.}" 2>/dev/null && pwd -P)" || return 0
+  [ -d "$PROFILE_HOME/orgs" ] || return 0
+
+  WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/brownfield-navigator.XXXXXX")" || return 0
+  trap 'rm -rf "$WORK_DIR"' EXIT
+  : > "$WORK_DIR/warnings"
+  : > "$WORK_DIR/auto-orgs"
+  : > "$WORK_DIR/suggest-orgs"
+  list_remote_urls "$TARGET_DIR" > "$WORK_DIR/remotes"
+
+  for org_profile in "$PROFILE_HOME"/orgs/*/profile.md; do
+    [ -f "$org_profile" ] || continue
+    evaluate_org "$org_profile" "$manual_mode"
+  done
+
+  auto_org_count="$(wc -l < "$WORK_DIR/auto-orgs" | tr -d ' ')"
+  if [ "$auto_org_count" -ge 1 ]; then
+    IFS="$(printf '\t')" read -r selected_org selected_reason < "$WORK_DIR/auto-orgs"
+  fi
+  if [ "$auto_org_count" -ge 2 ]; then
+    add_warning "여러 조직이 매칭됨: $(cut -f1 "$WORK_DIR/auto-orgs" | join_lines /dev/stdin). $selected_org 만 적용함. 매칭 조건을 좁힐 것"
+  fi
+
+  if [ -n "$selected_org" ]; then
+    print_header "$selected_org" "$selected_reason"
+  elif [ -s "$WORK_DIR/suggest-orgs" ]; then
+    printf '# brownfield-navigator 안내\n\n'
+  fi
+  if [ -s "$WORK_DIR/suggest-orgs" ]; then
+    print_suggestions
+  fi
+  if [ -n "$selected_org" ]; then
+    print_rule_sections "$selected_org"
+    print_references "$selected_org"
+  fi
+  if [ -s "$WORK_DIR/warnings" ]; then
+    print_warnings
+  fi
+}
+
+main "$@"
+exit 0
+````
+
+- [ ] **Step 4: 실행 권한 부여 후 테스트를 실행해 통과 확인**
+
+실행: `chmod +x plugins/brownfield-navigator/bin/compose-guide && bash plugins/brownfield-navigator/tests/compose-guide.test.sh; echo "exit=$?"`
+기대: `compose-guide.test.sh: 15개 중 0개 실패`, `exit=0`
+
+- [ ] **Step 5: 전체 테스트 확인**
+
+실행: `bash plugins/brownfield-navigator/tests/run-all.sh; echo "exit=$?"`
+기대: compose-guide 15개, match 8개, profile 10개, sections 3개 모두 `0개 실패`, `exit=0`
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add plugins/brownfield-navigator/bin/compose-guide plugins/brownfield-navigator/tests/compose-guide.test.sh
+git commit -F - <<'EOF'
+feat: 조직, 개인, 프로젝트 프로필을 병합하는 compose-guide 추가
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Hpd4mB4Q7hB6xWvD76iD5k
+EOF
+```
+
+---
+
+### Task 8: SessionStart 훅
+
+**Files:**
+- Create: `plugins/brownfield-navigator/hooks/hooks.json`
+- Create: `plugins/brownfield-navigator/hooks/run-hook.cmd`
+- Create: `plugins/brownfield-navigator/hooks/session-start`
+- Test: `plugins/brownfield-navigator/tests/session-start.test.sh`
+
+- [ ] **Step 1: 실패하는 테스트 작성**
+
+`plugins/brownfield-navigator/tests/session-start.test.sh`
+
+````bash
+# hooks/session-start 테스트 (JSON 검증에 python3 사용)
+. "$(cd "$(dirname "$0")" && pwd -P)/test-helpers.sh"
+
+run_session_start() {
+  local hook_input="$1"
+  printf '%s' "$hook_input" | BROWNFIELD_NAVIGATOR_HOME="$TEST_TMP/profiles" "$BASH" "$PLUGIN_ROOT/hooks/session-start"
+}
+
+# 훅 출력 JSON을 파싱해 additionalContext 값을 출력. JSON이 올바르지 않으면 INVALID_JSON 출력
+read_additional_context() {
+  python3 -c '
+import json, sys
+try:
+    data = json.load(sys.stdin)
+    sys.stdout.write(data["hookSpecificOutput"]["additionalContext"])
+except Exception as error:
+    sys.stdout.write("INVALID_JSON: %s" % error)
+'
+}
+
+write_acme_profile() {
+  write_lines "$TEST_TMP/profiles/orgs/acme/profile.md" \
+    "---" "match-remotes:" '  - "*acme/*"' "---" "$@"
+}
+
+test_outputs_valid_json_with_special_characters() {
+  write_acme_profile \
+    "## [special] 특수문자" \
+    "$(printf '따옴표 "q" 백슬래시 \\ 탭\t끝')" \
+    "$(printf '폼피드\f와 제어문자\001 제거')"
+  make_git_repo "$TEST_TMP/app" "git@github.com:acme/app.git"
+  local context
+  context="$(run_session_start "{\"session_id\":\"s\",\"cwd\":\"$TEST_TMP/app\",\"hook_event_name\":\"SessionStart\"}" | read_additional_context)"
+  assert_not_contains "$context" "INVALID_JSON" "올바른 JSON 출력"
+  assert_contains "$context" "# brownfield-navigator 가이드" "가이드가 additionalContext에 들어감"
+  assert_contains "$context" "$(printf '따옴표 "q" 백슬래시 \\ 탭\t끝')" "따옴표, 백슬래시, 탭 보존"
+  assert_contains "$context" "폼피드와 제어문자 제거" "그 밖의 제어문자는 제거"
+}
+
+test_outputs_nothing_without_match() {
+  write_acme_profile "## [rule] 규칙" "본문"
+  make_git_repo "$TEST_TMP/app" "git@github.com:other/app.git"
+  assert_empty "$(run_session_start "{\"cwd\":\"$TEST_TMP/app\"}")" "매칭이 없으면 빈 출력"
+}
+
+test_falls_back_to_project_dir_env() {
+  write_acme_profile "## [rule] 규칙" "본문"
+  make_git_repo "$TEST_TMP/app" "git@github.com:acme/app.git"
+  local context
+  context="$(CLAUDE_PROJECT_DIR="$TEST_TMP/app" run_session_start '{"session_id":"s"}' | read_additional_context)"
+  assert_contains "$context" "## [rule] 규칙 (조직: acme)" "cwd가 없으면 CLAUDE_PROJECT_DIR 사용"
+}
+
+test_prefers_cwd_over_project_dir_env() {
+  write_acme_profile "## [rule] 규칙" "본문"
+  make_git_repo "$TEST_TMP/app" "git@github.com:acme/app.git"
+  mkdir -p "$TEST_TMP/elsewhere"
+  local output
+  output="$(CLAUDE_PROJECT_DIR="$TEST_TMP/app" run_session_start "{\"cwd\":\"$TEST_TMP/elsewhere\"}")"
+  assert_empty "$output" "입력의 cwd가 CLAUDE_PROJECT_DIR보다 우선"
+}
+
+run_test test_outputs_valid_json_with_special_characters
+run_test test_outputs_nothing_without_match
+run_test test_falls_back_to_project_dir_env
+run_test test_prefers_cwd_over_project_dir_env
+finish_tests
+````
+
+- [ ] **Step 2: 테스트를 실행해 실패 확인**
+
+실행: `bash plugins/brownfield-navigator/tests/session-start.test.sh; echo "exit=$?"`
+기대: `hooks/session-start: No such file or directory`, 마지막 줄 `session-start.test.sh: 4개 중 2개 실패`, `exit=1`
+
+- [ ] **Step 3: 훅 스크립트 작성**
+
+`plugins/brownfield-navigator/hooks/session-start`
+
+````bash
+#!/usr/bin/env bash
+# SessionStart 훅: 세션을 시작한 디렉터리에 맞는 brownfield-navigator 가이드를 컨텍스트로 주입
+# 어떤 경우에도 세션을 막지 않음 (항상 exit 0)
+# bash 3.2 호환
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
+COMPOSE_GUIDE="$SCRIPT_DIR/../bin/compose-guide"
+
+# 훅 입력 JSON에서 cwd 값을 꺼냄. 경로 안의 JSON 이스케이프(\" 나 \u)는 지원하지 않음
+extract_cwd() {
+  local hook_input="$1"
+  local cwd_pattern='"cwd"[[:space:]]*:[[:space:]]*"([^"]*)"'
+  if [[ "$hook_input" =~ $cwd_pattern ]]; then
+    printf '%s\n' "${BASH_REMATCH[1]}"
+  fi
+}
+
+resolve_target_dir() {
+  local cwd_from_input="$1"
+  if [ -n "$cwd_from_input" ] && [ -d "$cwd_from_input" ]; then
+    printf '%s\n' "$cwd_from_input"
+  elif [ -n "${CLAUDE_PROJECT_DIR:-}" ] && [ -d "$CLAUDE_PROJECT_DIR" ]; then
+    printf '%s\n' "$CLAUDE_PROJECT_DIR"
+  else
+    pwd
+  fi
+}
+
+# JSON 문자열 값으로 쓸 수 있게 이스케이프. 탭, 줄바꿈, CR 이외의 제어문자는 제거
+escape_for_json() {
+  local text
+  text="$(printf '%s' "$1" | LC_ALL=C tr -d '\001-\010\013\014\016-\037')"
+  text="${text//\\/\\\\}"
+  text="${text//\"/\\\"}"
+  text="${text//$'\n'/\\n}"
+  text="${text//$'\r'/\\r}"
+  text="${text//$'\t'/\\t}"
+  printf '%s' "$text"
+}
+
+main() {
+  local hook_input="" target_dir guide_text
+  if [ ! -t 0 ]; then
+    hook_input="$(cat)"
+  fi
+  target_dir="$(resolve_target_dir "$(extract_cwd "$hook_input")")"
+  guide_text="$(bash "$COMPOSE_GUIDE" "$target_dir" 2>/dev/null)"
+  [ -n "$guide_text" ] || return 0
+  printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "SessionStart",\n    "additionalContext": "%s"\n  }\n}\n' \
+    "$(escape_for_json "$guide_text")"
+}
+
+main
+exit 0
+````
+
+- [ ] **Step 4: 훅 실행 래퍼 작성**
+
+suberpower의 `run-hook.cmd`와 같은 파일이다. `cp ~/.claude/plugins/cache/suberpower/suberpower/1.3.0/hooks/run-hook.cmd plugins/brownfield-navigator/hooks/run-hook.cmd`로 복사하거나 아래 내용으로 작성한다.
+
+`plugins/brownfield-navigator/hooks/run-hook.cmd`
+
+````bash
+: << 'CMDBLOCK'
+@echo off
+REM Cross-platform polyglot wrapper for hook scripts.
+REM On Windows: cmd.exe runs the batch portion, which finds and calls bash.
+REM On Unix: the shell interprets this as a script (: is a no-op in bash).
+REM
+REM Hook scripts use extensionless filenames (e.g. "session-start" not
+REM "session-start.sh") so Claude Code's Windows auto-detection -- which
+REM prepends "bash" to any command containing .sh -- doesn't interfere.
+REM
+REM Usage: run-hook.cmd <script-name> [args...]
+
+if "%~1"=="" (
+    echo run-hook.cmd: missing script name >&2
+    exit /b 1
+)
+
+set "HOOK_DIR=%~dp0"
+
+REM Try Git for Windows bash in standard locations
+if exist "C:\Program Files\Git\bin\bash.exe" (
+    "C:\Program Files\Git\bin\bash.exe" "%HOOK_DIR%%~1" %2 %3 %4 %5 %6 %7 %8 %9
+    exit /b %ERRORLEVEL%
+)
+if exist "C:\Program Files (x86)\Git\bin\bash.exe" (
+    "C:\Program Files (x86)\Git\bin\bash.exe" "%HOOK_DIR%%~1" %2 %3 %4 %5 %6 %7 %8 %9
+    exit /b %ERRORLEVEL%
+)
+
+REM Try bash on PATH (e.g. user-installed Git Bash, MSYS2, Cygwin)
+where bash >nul 2>nul
+if %ERRORLEVEL% equ 0 (
+    bash "%HOOK_DIR%%~1" %2 %3 %4 %5 %6 %7 %8 %9
+    exit /b %ERRORLEVEL%
+)
+
+REM No bash found - exit silently rather than error
+REM (plugin still works, just without SessionStart context injection)
+exit /b 0
+CMDBLOCK
+
+# Unix: run the named script directly
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_NAME="$1"
+shift
+exec bash "${SCRIPT_DIR}/${SCRIPT_NAME}" "$@"
+````
+
+- [ ] **Step 5: 훅 등록 파일 작성**
+
+`plugins/brownfield-navigator/hooks/hooks.json`
+
+````json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd\" session-start",
+            "async": false
+          }
+        ]
+      }
+    ]
+  }
+}
+````
+
+- [ ] **Step 6: 실행 권한 부여 후 테스트를 실행해 통과 확인**
+
+실행: `chmod +x plugins/brownfield-navigator/hooks/session-start plugins/brownfield-navigator/hooks/run-hook.cmd && bash plugins/brownfield-navigator/tests/session-start.test.sh; echo "exit=$?"`
+기대: `session-start.test.sh: 4개 중 0개 실패`, `exit=0`
+
+- [ ] **Step 7: 플러그인 검증**
+
+실행: `claude plugin validate plugins/brownfield-navigator`
+기대: `✔ Validation passed`
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add plugins/brownfield-navigator/hooks plugins/brownfield-navigator/tests/session-start.test.sh
+git commit -F - <<'EOF'
+feat: 세션 시작 때 가이드를 주입하는 SessionStart 훅 추가
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Hpd4mB4Q7hB6xWvD76iD5k
+EOF
+```
+
+---
+
+### Task 9: 프로필 템플릿
+
+**Files:**
+- Create: `plugins/brownfield-navigator/templates/org-profile.md`
+- Create: `plugins/brownfield-navigator/templates/project.md`
+- Create: `plugins/brownfield-navigator/templates/personal.md`
+- Create: `plugins/brownfield-navigator/templates/reference.md`
+- Test: `plugins/brownfield-navigator/tests/templates.test.sh`
+
+- [ ] **Step 1: 실패하는 테스트 작성**
+
+`plugins/brownfield-navigator/tests/templates.test.sh`
+
+````bash
+# templates/ 가 그대로 올바른 프로필로 동작하는지 확인
+. "$(cd "$(dirname "$0")" && pwd -P)/test-helpers.sh"
+
+test_templates_compose_without_warnings() {
+  local profiles="$TEST_TMP/profiles"
+  mkdir -p "$profiles/orgs/sample/projects" "$profiles/orgs/sample/references"
+  cp "$PLUGIN_ROOT/templates/org-profile.md" "$profiles/orgs/sample/profile.md"
+  cp "$PLUGIN_ROOT/templates/project.md" "$profiles/orgs/sample/projects/your-repo.md"
+  cp "$PLUGIN_ROOT/templates/reference.md" "$profiles/orgs/sample/references/topic.md"
+  cp "$PLUGIN_ROOT/templates/personal.md" "$profiles/personal.md"
+  make_git_repo "$TEST_TMP/your-repo" "git@github.com:your-org/your-repo.git"
+  local output
+  output="$(BROWNFIELD_NAVIGATOR_HOME="$profiles" "$BASH" "$PLUGIN_ROOT/bin/compose-guide" "$TEST_TMP/your-repo")"
+  assert_not_contains "$output" "## brownfield-navigator 경고" "템플릿은 경고 없이 파싱"
+  assert_contains "$output" "## [commit-message] 커밋 메시지 (조직: sample)" "조직 템플릿 규칙 병합"
+  assert_contains "$output" "## [commit-by-user] 커밋은 직접 (개인)" "개인 템플릿 규칙 병합"
+  assert_contains "$output" "## [tests] 테스트 코드 (프로젝트: your-repo)" "프로젝트 템플릿 규칙 병합"
+  assert_contains "$output" "references/topic.md: 이 참고 파일이 담은 내용을 한 줄로" "참고 템플릿 description"
+}
+
+run_test test_templates_compose_without_warnings
+finish_tests
+````
+
+- [ ] **Step 2: 테스트를 실행해 실패 확인**
+
+실행: `bash plugins/brownfield-navigator/tests/templates.test.sh; echo "exit=$?"`
+기대: `templates/org-profile.md: No such file or directory`, 마지막 줄 `templates.test.sh: 1개 중 1개 실패`, `exit=1`
+
+- [ ] **Step 3: 조직 프로필 템플릿 작성**
+
+`plugins/brownfield-navigator/templates/org-profile.md`
+
+````markdown
+---
+# 적용 강도: auto(규칙 주입) | suggest(한 줄 안내만) | off(주입 안 함)
+apply: auto
+# git remote URL 패턴 (bash glob). URL 끝의 / 와 .git 은 떼고 비교
+match-remotes:
+  - "*your-org/*"
+# 경로 패턴 (bash glob). 대상 디렉터리나 그 상위 디렉터리와 비교, 앞머리 ~ 는 홈으로 확장
+match-paths: []
+---
+
+# 조직 프로필
+
+위치: `~/.claude/brownfield-navigator/orgs/<조직 이름>/profile.md` (조직 이름은 디렉터리 이름)
+
+- `## [id] 제목` 섹션만 규칙으로 병합된다. id는 소문자, 숫자, `-`만 쓴다
+- 코어 규칙과 같은 id를 쓰면 그 규칙을 대체하고, 새 id는 뒤에 추가된다
+- 규칙마다 짧은 `**Why:**`를 적으면 Claude가 적용 여부를 스스로 판단할 수 있다
+- 리스트는 블록 형식만 지원한다. `["a", "b"]` 형식은 파싱 실패로 무시된다
+
+## [commit-message] 커밋 메시지
+
+커밋 메시지는 `type: 설명 TICKET-123` 형식으로 쓴다. 티켓 번호는 브랜치 이름에서 확인한다.
+
+**Why:** 레포 이력의 기존 형식과 맞추기 위함
+````
+
+- [ ] **Step 4: 프로젝트 파일 템플릿 작성**
+
+`plugins/brownfield-navigator/templates/project.md`
+
+````markdown
+---
+# apply 를 생략하면 조직 프로필의 값을 따른다
+# apply: auto
+match-remotes:
+  - "*your-org/your-repo"
+match-paths: []
+---
+
+# 프로젝트 파일
+
+위치: `~/.claude/brownfield-navigator/orgs/<조직 이름>/projects/<프로젝트 이름>.md`
+
+상위 층(코어, 조직, 개인)과 달라지는 규칙, 또는 이 레포에만 항상 적용할 규칙만 둔다. 설정값이나 함정 같은 사실 정보는 Claude Code 프로젝트 메모리에 둔다.
+
+## [tests] 테스트 코드
+
+이 레포는 테스트 파일을 만들지 않는다. 타입체크와 빌드로 검증한다.
+
+**Why:** 조직 기본값과 다른 이 레포의 관례
+````
+
+- [ ] **Step 5: 개인 프로필 템플릿 작성**
+
+`plugins/brownfield-navigator/templates/personal.md`
+
+````markdown
+# 개인 프로필
+
+위치: `~/.claude/brownfield-navigator/personal.md`
+
+조직 프로필이 매칭되어 가이드가 병합될 때만 적용된다. Claude와 일하는 방식에 대한 선호를 둔다. frontmatter는 쓰지 않는다.
+
+## [commit-by-user] 커밋은 직접
+
+요청하지 않으면 커밋하지 않는다. 변경을 마치면 변경 파일과 요지만 보고한다.
+
+**Why:** 변경 내용을 직접 확인한 뒤 커밋 단위와 메시지를 정하기 위함
+````
+
+- [ ] **Step 6: 참고 파일 템플릿 작성**
+
+`plugins/brownfield-navigator/templates/reference.md`
+
+````markdown
+---
+description: 이 참고 파일이 담은 내용을 한 줄로 (세션에 주입되는 목록에 표시됨)
+---
+
+# 참고 파일
+
+위치: `~/.claude/brownfield-navigator/orgs/<조직 이름>/references/<주제>.md`
+
+세션에는 경로와 description만 주입되고, Claude가 관련 작업을 할 때 이 파일을 읽는다. 여러 레포에 걸친 긴 참고 정보(레포 지도, 외부 규약 등)를 둔다. 본문 형식은 자유다.
+````
+
+- [ ] **Step 7: 테스트를 실행해 통과 확인**
+
+실행: `bash plugins/brownfield-navigator/tests/templates.test.sh; echo "exit=$?"`
+기대: `templates.test.sh: 1개 중 0개 실패`, `exit=0`
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add plugins/brownfield-navigator/templates plugins/brownfield-navigator/tests/templates.test.sh
+git commit -F - <<'EOF'
+feat: 조직, 프로젝트, 개인, 참고 파일 템플릿 추가
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Hpd4mB4Q7hB6xWvD76iD5k
+EOF
+```
+
+---
+
+### Task 10: 수집 스킬 (`skills/harvest-profile/SKILL.md`)
+
+**Files:**
+- Create: `plugins/brownfield-navigator/skills/harvest-profile/SKILL.md`
+
+- [ ] **Step 1: 수집 스킬 작성**
+
+`plugins/brownfield-navigator/skills/harvest-profile/SKILL.md`
+
+````markdown
+---
+name: harvest-profile
+description: "Claude Code 프로젝트 메모리를 모아 brownfield-navigator 프로필(조직, 개인, 프로젝트 파일)의 초안을 만들고, 승인을 받아 기록한다. 처음 설정할 때나 메모리가 쌓인 뒤 프로필을 보완할 때 사용자가 직접 호출한다."
+disable-model-invocation: true
+argument-hint: "[조직 이름 또는 메모리 경로]"
+---
+
+# 프로필 수집
+
+프로젝트 메모리(`~/.claude/projects/*/memory/`)에 흩어진 지침을 모아 brownfield-navigator 프로필로 정리한다.
+
+- 파일을 쓰기 전에 반드시 사용자 승인을 받는다
+- 메모리를 삭제하거나 수정하지 않는다
+
+인자(`$ARGUMENTS`)가 조직 이름이면 그 조직 후보만, 메모리 경로면 그 경로만 다룬다. 인자가 없으면 전체를 다룬다.
+
+## 경로
+
+- 프로필 홈: 환경변수 `BROWNFIELD_NAVIGATOR_HOME`, 없으면 `~/.claude/brownfield-navigator`
+- 파일 형식과 예시: `${CLAUDE_PLUGIN_ROOT}/templates/`의 `org-profile.md`, `personal.md`, `project.md`, `reference.md`
+- 코어 규칙: `${CLAUDE_PLUGIN_ROOT}/skills/brownfield-navigator/SKILL.md`의 `## [id]` 섹션
+- 미리보기: `"${CLAUDE_PLUGIN_ROOT}/bin/compose-guide" "<레포 경로>"`
+
+## 1. 수집
+
+1. `~/.claude/projects/*/memory/*.md` 목록을 만든다. `MEMORY.md`는 색인이므로 제외한다
+2. 프로젝트 디렉터리마다 원래 작업 경로를 복원한다
+   - 같은 디렉터리의 `*.jsonl` 트랜스크립트에서 첫 `"cwd"` 값을 읽는다: `grep -o -m 1 '"cwd":"[^"]*"' <jsonl 파일>`
+   - jsonl이 없으면 디렉터리 이름의 `-`를 `/`로 바꾼 후보 중 실제로 존재하는 경로를 쓴다. 후보가 여럿이거나 없으면 사용자에게 묻는다
+3. 복원한 경로마다 `git -C <경로> remote get-url origin`으로 remote를 조회한다
+4. 조직 후보로 묶는다. remote가 있으면 owner(예: `git@github.com:acme/app.git`의 `acme`)가 기준이고, 없으면 상위 디렉터리가 기준이다
+
+## 2. 범위 확인
+
+조직 후보별로 프로젝트 목록과 메모리 개수를 표로 보여주고 묻는다.
+
+- 어떤 후보를 조직으로 등록할지, 조직 이름(프로필 디렉터리 이름)을 무엇으로 할지
+- 각 조직에 포함할 프로젝트. 개인 프로젝트나 실험용 레포를 뺄지는 사용자가 정한다
+
+사용자가 정한 범위의 메모리만 다음 단계에서 읽는다.
+
+## 3. 분류
+
+메모리 본문을 모두 읽고 항목마다 아래 표로 분류한다. 한 메모리에 여러 규칙이 섞여 있으면 나눠서 분류한다.
+
+| 조건 | 분류 |
+|---|---|
+| 코어 규칙과 같은 내용 | 생략. 어느 코어 id와 겹치는지 기록 |
+| 레포에 남는 산출물에 대한 규약 (커밋 메시지 형식, 주석 형식, 네이밍, 문구 출처 등) | 조직 프로필 |
+| Claude와 일하는 방식 (커밋 여부, 보고 방식, 산출물 보관 등) | 개인 프로필 |
+| 같은 주제인데 레포마다 다름 | 조직 기본값과, 달라지는 레포의 프로젝트 파일 (같은 id) |
+| 한 레포에서만 나온 규칙 | 적용 범위를 사용자에게 질문. 넓히지 않으면 그 레포의 프로젝트 파일 |
+| 설정값, 함정, 문서 위치, 진행 중인 작업 기록 같은 사실 | 메모리에 유지 (프로필에 넣지 않음) |
+| 여러 레포에 걸친 긴 참고 정보 (레포 지도, 외부 규약) | 조직 `references/` |
+| 전역 CLAUDE.md와 같은 내용 | 생략. 정리 후보로 기록 |
+
+같은 규칙이 여러 레포에 복제되어 있으면 하나로 합치고 출처 레포를 모두 기록한다.
+
+## 4. 충돌 정리
+
+서로 부딪히는 규칙은 나란히 보여주고, 아래 둘 중 하나로 정리안을 제시한다.
+
+- **적용 상황으로 구분:** 두 규칙이 서로 다른 상황을 다루면 한 규칙 안에서 상황별로 나눠 적는다
+- **조직 기본값과 프로젝트 대체:** 레포마다 관례가 다르면 조직에 기본값을 두고, 다른 레포는 같은 id로 대체한다
+
+사용자가 고른 정리안을 초안에 반영한다.
+
+## 5. 초안과 작성
+
+1. 층별 초안을 보여준다. 규칙마다 id, 제목, 본문, `**Why:**`, 출처 메모리를 적는다
+2. 매칭 조건을 제안한다
+   - 조직: remote가 있으면 `"*<owner>/*"`, 없으면 `"<공통 상위 경로>/*"` (홈 아래면 `~/`로 시작)
+   - 프로젝트: remote가 있으면 `"*<owner>/<레포 이름>"`, 없으면 레포 경로
+3. 사용자 승인을 받는다. 승인 전에는 파일을 쓰지 않는다
+4. `templates/`의 형식대로 파일을 쓴다
+   - frontmatter 리스트는 블록 형식(`  - "패턴"`)만 쓴다. `["패턴"]` 형식은 파싱 실패로 무시된다
+   - id는 소문자, 숫자, `-`만 쓴다
+
+### 이미 프로필이 있을 때
+
+기존 파일을 덮어쓰지 않는다. 기존 규칙과 비교해 추가할 규칙과 바꿀 규칙을 diff 형태로 보여주고, 승인받은 부분만 반영한다.
+
+## 6. 보고
+
+1. 생성하거나 수정한 파일 목록
+2. 포함한 레포마다 `compose-guide` 미리보기. 매칭 근거 줄과 경고 절을 보여주고, 경고가 있으면 고친다
+3. 정리 후보 메모리 목록: 프로필로 옮겨진 메모리, 전역 CLAUDE.md와 중복인 메모리. **삭제하지 않고 목록만 보고한다.** 정리는 사용자가 직접 한다
+4. 프로필 홈은 플러그인 바깥의 사용자 파일이므로, 다른 기기에서 쓰려면 따로 백업하거나 동기화해야 한다고 한 줄로 알린다
+````
+
+- [ ] **Step 2: 플러그인 검증**
+
+실행: `claude plugin validate plugins/brownfield-navigator`
+기대: `✔ Validation passed`
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add plugins/brownfield-navigator/skills/harvest-profile/SKILL.md
+git commit -F - <<'EOF'
+feat: 프로젝트 메모리로 프로필 초안을 만드는 harvest-profile 스킬 추가
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Hpd4mB4Q7hB6xWvD76iD5k
+EOF
+```
+
+---
+
+### Task 11: README
+
+**Files:**
+- Create: `README.md`
+
+- [ ] **Step 1: README 작성**
+
+`README.md`
+
+````markdown
+# brownfield-navigator
+
+레거시(brownfield) 코드베이스에서 기능을 넓히거나 유지보수할 때, **회사 컨벤션과 기존 코드의 흐름을 따르고 싶은 사용자를 위한** Claude Code 플러그인입니다.
+
+프로젝트 메모리에 흩어진 지침을 조직, 개인, 프로젝트 프로필로 정리해 두면, 세션을 시작할 때 작업 디렉터리에 맞는 가이드를 병합해 주입합니다. 개인 프로젝트처럼 프로필에 맞지 않는 곳에서는 아무것도 하지 않습니다.
+
+강제 장치가 아니라 가이드입니다. 사용자가 다른 방식을 원하면 Claude는 그쪽을 따릅니다.
+
+## 동작 방식
+
+| 층 | 내용 | 위치 |
+|---|---|---|
+| 코어 | 회사와 도구에 무관한 레거시 작업 원칙 | 플러그인 `skills/brownfield-navigator/SKILL.md` |
+| 조직 | 회사 컨벤션 | `~/.claude/brownfield-navigator/orgs/<조직>/profile.md` |
+| 개인 | Claude와 일하는 방식에 대한 개인 선호 | `~/.claude/brownfield-navigator/personal.md` |
+| 프로젝트 | 특정 레포에서만 달라지는 규칙 | `~/.claude/brownfield-navigator/orgs/<조직>/projects/<이름>.md` |
+
+1. 세션이 시작되면 훅이 작업 디렉터리의 git remote와 경로를 조직 프로필의 매칭 조건과 비교합니다
+2. 매칭되면 `## [id] 제목` 섹션을 코어, 조직, 개인, 프로젝트 순으로 병합합니다. 같은 id는 뒤의 층이 대체합니다
+3. 병합된 가이드와 참고 파일 목록이 세션 컨텍스트에 들어갑니다
+
+설정값이나 함정 같은 프로젝트 고유의 사실은 지금처럼 Claude Code 프로젝트 메모리에 둡니다.
+
+## 설치
+
+```
+/plugin marketplace add june20516/brownfield-navigator
+/plugin install brownfield-navigator@brownfield-navigator
+```
+
+요구 사항: Claude Code, bash 3.2 이상. git은 remote 조건을 쓸 때만 필요합니다.
+
+## 처음 설정
+
+프로젝트 메모리가 쌓여 있다면 수집 스킬로 프로필 초안을 만듭니다.
+
+```
+/brownfield-navigator:harvest-profile
+```
+
+메모리를 모아 조직 후보를 보여주고, 분류와 충돌 정리를 거쳐 승인한 내용만 파일로 씁니다. 메모리는 삭제하거나 수정하지 않습니다.
+
+직접 작성하려면 `plugins/brownfield-navigator/templates/`의 파일을 복사해 고칩니다.
+
+## 프로필 형식
+
+### 조직 프로필과 프로젝트 파일
+
+```markdown
+---
+apply: auto
+match-remotes:
+  - "*your-org/*"
+match-paths:
+  - "~/work/your-org/*"
+---
+
+## [commit-message] 커밋 메시지
+
+커밋 메시지는 `type: 설명 TICKET-123` 형식으로 쓴다.
+
+**Why:** 레포 이력의 기존 형식과 맞추기 위함
+```
+
+- `apply`: `auto`(규칙 주입), `suggest`(한 줄 안내만), `off`(주입 안 함). 생략하면 `auto`이고, 프로젝트 파일에서 생략하면 조직 값을 따릅니다
+- `match-remotes`: git remote URL과 비교하는 bash glob입니다. URL 끝의 `/`와 `.git`은 떼고 비교합니다
+- `match-paths`: 작업 디렉터리나 그 상위 디렉터리와 비교하는 bash glob입니다. 앞머리 `~`는 홈으로 확장합니다. git을 쓰지 않는다면 이 조건을 씁니다
+- 리스트는 블록 형식만 지원합니다. `["a", "b"]` 형식은 파싱 실패로 무시되고 경고가 남습니다
+- 조직 이름은 `orgs/` 아래 디렉터리 이름, 프로젝트 이름은 파일 이름입니다
+
+### 규칙 섹션
+
+- `## [id] 제목`부터 다음 `## ` 헤딩 전까지가 규칙 하나입니다. id는 소문자, 숫자, `-`만 씁니다
+- 같은 id는 대체, 새 id는 추가입니다. 코어 규칙의 id는 `skills/brownfield-navigator/SKILL.md`에서 확인합니다
+- id가 없는 `## ` 섹션은 설명으로 보고 병합하지 않습니다
+
+### 개인 프로필
+
+`personal.md`에는 frontmatter 없이 규칙 섹션만 둡니다. 조직 프로필이 매칭되어 가이드가 병합될 때만 적용됩니다.
+
+### 참고 파일
+
+`orgs/<조직>/references/<주제>.md`에 frontmatter `description:` 한 줄을 둡니다. 세션에는 경로와 설명만 들어가고, Claude가 관련 작업을 할 때 읽습니다.
+
+## 수동으로 불러오기
+
+여러 레포를 오가는 디렉터리에서 세션을 시작했거나 `apply: suggest`인 레포에서 가이드를 쓰려면 호출합니다.
+
+```
+/brownfield-navigator:brownfield-navigator
+```
+
+병합 결과를 직접 확인하려면 `compose-guide`를 실행합니다.
+
+```bash
+plugins/brownfield-navigator/bin/compose-guide --manual ~/work/your-org/your-repo
+```
+
+## 주의
+
+- 프로필은 `~/.claude/brownfield-navigator/`에 있는 사용자 파일입니다. 플러그인을 업데이트해도 지워지지 않지만, 다른 기기에서 쓰려면 따로 백업하거나 동기화해야 합니다. 위치는 환경변수 `BROWNFIELD_NAVIGATOR_HOME`으로 바꿀 수 있습니다
+- 서브에이전트는 세션 시작 주입을 받지 않습니다. 코어 규칙 `[delegate-with-guide]`에 따라 Claude가 관련 규칙을 위임 프롬프트에 함께 적습니다
+- 한 레포에 `auto` 조직이 둘 이상 매칭되면 이름순 첫 조직만 적용하고 경고합니다
+
+## 개발
+
+```bash
+bash plugins/brownfield-navigator/tests/run-all.sh
+claude plugin validate plugins/brownfield-navigator
+claude --plugin-dir plugins/brownfield-navigator
+```
+````
+
+- [ ] **Step 2: 전체 테스트와 검증**
+
+실행: `bash plugins/brownfield-navigator/tests/run-all.sh; echo "exit=$?"; claude plugin validate . && claude plugin validate plugins/brownfield-navigator`
+기대: 테스트 파일 6개 모두 `0개 실패`, `exit=0`, 검증 두 번 모두 `✔ Validation passed`
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add README.md
+git commit -F - <<'EOF'
+docs: 설치, 프로필 형식, 사용법을 담은 README 추가
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Hpd4mB4Q7hB6xWvD76iD5k
+EOF
+```
+
+---
+
+### Task 12: bran 프로필 작성 (레포 밖, 커밋 없음)
+
+spec 9장 내용이다. 파일은 `~/.claude/brownfield-navigator/`에 쓰며 레포에 커밋하지 않는다.
+
+spec 14장 확인 결과: claude-sync의 동기화 대상은 `~/.claude/agents/`, `~/.claude/skills/`, `~/.claude/CLAUDE.md`, 플러그인 목록, MCP 설정뿐이라 이 디렉터리는 동기화되지 않는다. 작업을 마칠 때 사용자에게 알린다.
+
+**Files:**
+- Create: `~/.claude/brownfield-navigator/orgs/pnpt/profile.md`
+- Create: `~/.claude/brownfield-navigator/orgs/pnpt/references/sibling-repos.md`
+- Create: `~/.claude/brownfield-navigator/orgs/pnpt/references/app-webview.md`
+- Create: `~/.claude/brownfield-navigator/personal.md`
+- Create: `~/.claude/brownfield-navigator/orgs/pnpt/projects/fez-front-ctrl-central.md`
+- Create: `~/.claude/brownfield-navigator/orgs/pnpt/projects/fez-front-taap.md`
+- Create: `~/.claude/brownfield-navigator/orgs/pnpt/projects/omar-front-ctrl-room.md`
+- Create: `~/.claude/brownfield-navigator/orgs/pnpt/projects/front-space-petco.md`
+
+- [ ] **Step 1: 기존 프로필이 없는지 확인**
+
+실행: `ls ~/.claude/brownfield-navigator 2>&1`
+기대: `No such file or directory`. 디렉터리가 이미 있으면 **덮어쓰지 말고 멈춰서 사용자에게 알린다**
+
+- [ ] **Step 2: pnpt 조직 프로필 작성**
+
+`~/.claude/brownfield-navigator/orgs/pnpt/profile.md`
+
+````markdown
+---
+apply: auto
+match-remotes:
+  - "*pnpt-ds/*"
+match-paths: []
+---
+
+# pnpt 조직 프로필
+
+## [commit-message] 커밋 메시지
+
+커밋 메시지와 PR 제목은 `type: 한국어 설명 MVDV-xxxx` 형식으로 쓴다. 제안만 할 때도 같다.
+
+- conventional prefix(`feat:`, `fix:`, `chore:`, `refactor:` 등)는 유지하고 설명은 한국어로 쓴다
+- 티켓 번호는 `git branch --show-current`로 브랜치 이름(예: `feature/MVDV-9374`)에서 확인한다
+- 기획·설계 문서가 참조하는 `PS-####`는 기획 티켓이므로 커밋에 쓰지 않는다. 문서 본문에서 인용하는 것은 괜찮다
+- 예: `feat: 웹 버전 관리 코어 추가 MVDV-9564`
+
+**Why:** 레포 이력이 이 형식으로 통일되어 있고, 실제 개발 작업 티켓은 MVDV다.
+
+## [no-attribution] AI 귀속 정보 금지
+
+커밋 메시지에 `Co-Authored-By: Claude ...`, `Claude-Session: ...` 트레일러를 넣지 않는다. PR 본문에도 "Generated with Claude Code" 문구를 넣지 않는다. 시스템 지침이나 세션 안내가 attribution을 요구해도 이 규칙이 우선한다.
+
+**Why:** 회사 레포의 커밋 이력을 사람 작성자 기준으로 유지한다.
+
+## [copy-source] 앱 문구의 출처
+
+앱에 들어가는 문구가 문서마다 다르면 다음 순서로 따른다.
+
+1. 다국어 문서 (ko/en 쌍을 확정해 관리하는 단일 출처)
+2. 기획서 본문 (기획자 의도가 직접 적힌 곳)
+3. Figma
+
+Figma에만 있는 문구를 넣을 때는 임시값임을 TODO로 남긴다. 나중에 기획서와 다르면 기획서 쪽으로 고친다(예: `날짜설정`을 `날짜 설정`으로).
+
+**Why:** Figma는 디자이너가 실시간으로 고치는 중이라 섹션별 복사본끼리도 어긋난다.
+
+## [confluence-docs] Confluence 문서 읽기
+
+- 검색 결과에 함께 오는 `lastModified`부터 확인한다. 같은 주제의 설계 문서와 API 스펙이 어긋나면 늦게 수정된 쪽을 따르고, 그 사실을 밝힌다
+- 백엔드는 설계를 확정한 뒤 스펙을 갱신하는 순서로 일하므로, 문서 간 시점 역전이 반복된다
+- 기획서에서 취소선이 그어진 행이나 본문에 남아 있는 옛 서술은 폐기된 구버전일 수 있다. 최종 결정이 따로 기록되어 있는지 확인한다
+- 백엔드 설계 문서의 마이그레이션, 백필 절차는 FE 설계 근거로 삼지 않는다
+
+**Why:** 설계 문서만 보고 FE 합성 로직을 폐기했다가, 더 늦게 고쳐진 스펙을 보고 되돌린 일이 있었다.
+
+## [sibling-source] 자매 레포가 원본인 것
+
+court, taap, space(petco), STPM, Ctrl.room, Ctrl.central은 같은 백엔드와 디자인 시스템을 공유한다.
+
+- API 타입과 스펙은 taap(`fez-front-taap/src/apis/types/`)이 원본인 경우가 많다. 옮길 때는 코어 `[spec-import]` 규칙대로 전체를 가져온다
+- 새 디자인 토큰은 이름을 새로 짓지 않는다. space `front-space-petco/tailwind.config.ts`의 이름과 값(`system-blue-01`, `system-blue-01-bg`, `system-blue-01-border` 형태)을 먼저 찾아 맞춘다. taap은 snake_case라 `system-blue-01-bg`를 `system_blue_01_bg`로 옮긴다. 값이 기존 taap 토큰과 다르면 임의로 합치지 않고 알린다
+- 레포별 위치, 도메인, 원본 경로는 참고 파일 `sibling-repos.md`에 있다
+
+**Why:** 같은 시스템을 쓰는 레포끼리 이름과 스펙이 갈라지면 시안 대조와 유지보수가 어려워진다.
+
+## [role-naming] 역할 영문 접두어
+
+새 타입, 필드, 변수에 역할을 붙일 때 다음 접두어를 쓴다 (2026-08-04 확정, PNPT 프로덕트 용어 대사전 등재).
+
+| 역할 | 접두어 |
+|---|---|
+| 회원 | `member_` |
+| 이용자, 재실자 | `user_` |
+| 이용자 마스터, 입주사 관리자 | `tenant_manager_` |
+| Ctrl.room 파트너 회원, 빌딩 관리자 | `partner_manager` |
+
+기존 이름은 전 계층을 동시에 바꾸는 비용 때문에 그대로 두고, 신규 필드와 바꿀 수 있는 것부터 적용한다.
+
+**Why:** 기존 `member_`가 회원과 이용자를 섞어 가리켜 승인 주체 이름이 모호했다.
+
+## [tests] 테스트 코드
+
+테스트 코드를 커밋하는 관례가 없다. 테스트 파일을 새로 만들지는 레포별 규칙을 따르고, 레포 규칙이 없으면 만들기 전에 묻는다.
+
+**Why:** 테스트 설정이 있어 보여도 실제로는 테스트를 유지하지 않는 레포가 대부분이다.
+
+## [comment-style] 주석 형식
+
+- 명사형으로 끝낸다(`~고정`, `~필요`, `~없음`, `~함`). `~한다`, `~합니다` 같은 서술형으로 끝내지 않는다
+- 끝에 마침표를 찍지 않는다
+- 장식용 특수문자(`—`, `→`, `·`, `✓`)를 쓰지 않고 쉼표나 괄호로 처리한다
+- 설계 근거는 문서가 폐기돼도 필요한 "왜"만 한두 문장으로 코드에 남긴다. 배경 설명이나 규칙 절은 spec, plan 문서의 몫이다
+- 예: `호출 전에 lastTickAt을 갱신해야 한다.`는 `호출 전 lastTickAt 갱신 필요`로, `잔여 ms — 예약 없으면 -1`은 `잔여 ms (예약 없으면 -1)`로 쓴다
+
+**Why:** 기존 주석이 이 형식으로 통일되어 있어 서술형 문장과 마침표가 섞이면 톤이 어긋난다.
+
+## [korean-wording] 한국어 어휘
+
+주석, 토스트, 라벨, 문서에서 은유와 음차 외래어를 피하고 프로젝트가 이미 쓰는 평이한 말을 쓴다.
+
+| 쓰지 않음 | 대신 |
+|---|---|
+| 무장, arming | 발동 대기 |
+| 게이트, gating | 필수 조건 |
+| 부착 | 첨부 |
+| 승격 | 옮긴다 |
+| 봉투 (응답 구조 비유) | "응답에 meta가 있다"처럼 그대로 서술 |
+| 계측 | 관측, 수집, 또는 하는 일을 서술 |
+
+ROLE_STARTER에서 ROLE_MEMBER로의 전환은 "승급"이나 "promote"로 표현하지 않고 "STARTER => MEMBER 처리"라고 쓴다. 영어 식별자(`promoteIfStarter` 등)는 괜찮다.
+
+**Why:** 군사 은유나 음차 외래어는 팀의 다른 용어와 톤이 맞지 않고, 표준 번역어라도 팀이 모르면 이름값을 못 한다.
+````
+
+- [ ] **Step 3: 참고 파일 작성 (자매 레포 지도)**
+
+`~/.claude/brownfield-navigator/orgs/pnpt/references/sibling-repos.md`
+
+````markdown
+---
+description: pnpt 자매 레포의 역할, 공유 백엔드와 호스트, 환경별 도메인, 타입과 토큰의 원본 경로
+---
+
+# pnpt 자매 레포 지도
+
+## 레포
+
+| 레포 | 경로 | 역할 |
+|---|---|---|
+| fez-front-court | `~/repositories/fez-front-court` | 웹. CRA 기반 React, `react-router-dom`, Recoil과 `useApiOperation` 훅(react-query 미사용). 경로는 `/front/court/...`. 단일 코드베이스를 hostname에 따라 appType(Taap, STPM, IFC)별로 나눠 배포 |
+| fez-front-taap | `~/repositories/fez-front-taap` | React Native(Expo) 모바일 앱. 셀프 방문 등록, 방문자 승인 등을 WebView로 court와 space 페이지에 위임. 타입과 API 스펙의 원본인 경우가 많음 |
+| front-space-petco | `~/repositories/front-space-petco` | Next.js 14 App Router 웹. `NEXT_PUBLIC_BASE_PATH='/front/space'`로 court와 같은 호스트에서 경로로 분리. 디자인 토큰 네이밍의 원본(`tailwind.config.ts`) |
+| front-taap-stpm | `~/repositories/front-taap-stpm` | STPM(삼성전자) 전용 모바일 앱. STPM 약관 코드와 링크의 원본 |
+| omar-front-ctrl-room | `~/repositories/omar-front-ctrl-room` | Ctrl.room 웹 |
+| fez-front-ctrl-central | `~/repositories/fez-front-ctrl-central` | Ctrl.central 웹 (CRA) |
+
+court, taap, space는 같은 백엔드 API(`/api/court/...`)와 호스트네임을 공유한다.
+
+## 원본 경로
+
+- taap 타입 정의: `src/apis/types/{contractType,partnerType,commonType,fileStorage}.ts`
+- taap API 함수: `src/apis/{contract,partner,visitor}.ts`
+- space 셀프 방문 승인 화면: `src/app/visitor/selfRegist/`. court에서 이동할 때는 같은 도메인이므로 `window.location.href = '/front/space/visitor/selfRegist'`
+- space 디자인 토큰: `tailwind.config.ts`의 colors (`system-blue-01`, `system-blue-01-bg`(7%), `system-blue-01-border`(20%) 형태)
+
+## 환경별 도메인
+
+| 환경 | 도메인 |
+|---|---|
+| dev | `dev-court.pnpt.net` (court는 `/front/court/...`, space는 `/front/space/...`) |
+| stg | `stg-court.pnpt.net` |
+| prod Taap | `taapspace.kr` |
+| prod STPM | `stpm.pnpt.space` |
+| prod IFC | `ifc.pnpt.space` |
+````
+
+- [ ] **Step 4: 참고 파일 작성 (앱과 웹뷰 규약)**
+
+`~/.claude/brownfield-navigator/orgs/pnpt/references/app-webview.md`
+
+````markdown
+---
+description: taap 앱과 웹뷰(court, space) 사이의 규약. lang 쿼리 파라미터, window.taap.canGoBack 동기화 함정
+---
+
+# 앱과 웹뷰 사이의 규약
+
+## 언어 전달: `lang=ko|en` 쿼리 파라미터
+
+- fez-front-taap 앱이 웹뷰에 사용 언어를 넘기는 규약은 `lang=ko|en` 쿼리 파라미터다. 값은 `useI18n().locale`(`resolveAvailableLocale`로 정규화된 `ko` 또는 `en`)
+- 선례: My 계약 웹뷰 4곳(`MyContractListScreen`, `MyContractDetailScreen`, `MyContractUserScreen`, `MyContractBillDetailScreen`), 커밋 `b9b21573`(MVDV-9056)
+- 예외: 인증(로그인) 웹뷰만 `locale=<기기 원본 languageCode>`(`src/functions/auth.ts`). OAuth 서버로 가는 별개 경로이므로 따라가지 않는다
+- 앱은 기기 OS locale만 본다. 앱 안에 언어 선택 UI는 없고, 지원하지 않는 언어는 `en`으로 대체한다
+- 웹의 `useLang`은 파라미터가 없으면 `ko`이므로 구버전 앱에서는 국문이 나온다. front-space-petco의 `useLang`은 이미 `?lang=`을 읽는다
+
+## `window.taap.canGoBack` 동기화
+
+taap의 `src/components/WebViewCommon.tsx`가 주입하는 `PageHistoryInjectCode`는 `history.back()`을 패치한다. `window.taap.canGoBack`이 falsy면 native로 goBack을 보내 웹뷰 자체를 닫는다. 아래 세 갱신 경로가 모두 살아 있어야 딥링크 진입, SPA 내비게이션, Android 조합에서 깨지지 않는다.
+
+1. 주입 시점 초기화: `window.taap.canGoBack = window.history.length > 1`. 진입 페이지의 useEffect가 주입보다 먼저 pushState를 끝내는 경우를 잡는다
+2. native `onNavigationStateChange`: 전체 페이지 이동과 iOS SPA pushState에는 발화하지만 Android SPA pushState에는 믿을 수 없다
+3. 주입 코드가 보내는 `type: "navigationStateChange"` postMessage를 native 메시지 핸들러에서 처리할 때도 주입: Android SPA 경로의 유일한 후속 동기화 통로
+
+**함정:** iOS만 테스트하면 2번 경로가 가려 줘서 통과하고, Android에서만 "뒤로가기를 누르면 웹뷰가 바로 닫힘"으로 나타난다. 웹뷰 콘텐츠 쪽(space 등)에서는 우회가 어렵고 taap 쪽 수정이 필요하다.
+````
+
+- [ ] **Step 5: 개인 프로필 작성**
+
+`~/.claude/brownfield-navigator/personal.md`
+
+````markdown
+# bran 개인 프로필
+
+## [commit-by-user] 커밋은 직접
+
+- 사용자가 명시적으로 요청하지 않으면 `git commit`을 실행하지 않는다. 계획 실행 중이나 task 완료 시점처럼 커밋이 자연스러워 보여도 하지 않는다
+- 커밋할지 묻지도 않는다. 변경을 마치면 변경 파일과 요지를 보고하고 멈춘다
+- 서브에이전트 프롬프트에 커밋 단계를 넣지 않는다
+- 커밋 메시지는 제안만 한다
+
+**Why:** 변경을 직접 검토한 뒤 커밋 단위와 메시지를 정한다.
+
+## [workflow-docs] 워크플로우 산출물
+
+`docs/suberpowers/specs/`, `docs/suberpowers/plans/` 같은 spec, plan 문서는 작성하되 커밋하지 않는다. 커밋 단위를 제안할 때 `docs/`를 빼고, `git status`에 `?? docs/`가 남아 있어도 누락으로 보고하지 않는다.
+
+**Why:** 작업을 진행하기 위한 문서이지 레포에 남길 자산이 아니다.
+
+## [one-task-then-report] 한 작업씩 보고
+
+작업 단위 하나를 끝내면 변경 파일과 요지를 보고하고 멈춘다. 다음 작업으로 넘어가지 않는다.
+
+작업 트리에 커밋하지 않은 이전 작업의 변경이 남아 있으면, 새 작업은 가능한 한 다른 파일에서 하고 보고할 때 "이번 작업 파일 목록"을 따로 적는다.
+
+**Why:** 한 단위씩 리뷰하고 스테이징하기 위함이다.
+````
+
+- [ ] **Step 6: 프로젝트 파일 작성 (fez-front-ctrl-central)**
+
+`~/.claude/brownfield-navigator/orgs/pnpt/projects/fez-front-ctrl-central.md`
+
+````markdown
+---
+match-remotes:
+  - "*pnpt-ds/fez-front-ctrl-central"
+---
+
+# fez-front-ctrl-central
+
+## [tests] 테스트 코드
+
+테스트 파일을 새로 만들지 않는다. TDD 스킬이 테스트를 요구해도 구현과 `tsc --noEmit`, CRA 빌드 검증으로 대신한다.
+
+**Why:** `package.json`에 `@testing-library/*`와 `react-scripts test`가 있지만 실제로는 테스트를 쓰지 않는 레포다.
+````
+
+- [ ] **Step 7: 프로젝트 파일 작성 (fez-front-taap)**
+
+`~/.claude/brownfield-navigator/orgs/pnpt/projects/fez-front-taap.md`
+
+````markdown
+---
+match-remotes:
+  - "*pnpt-ds/fez-front-taap"
+---
+
+# fez-front-taap
+
+## [tests] 테스트 코드
+
+테스트 코드를 유지하지 않는다(보일러플레이트 `__tests__/App-test.tsx`만 있고 `test` 스크립트 없음). 정적 검증은 `npx tsc --noEmit`과 `npx prettier --check <파일>`로 하고, 동작은 기기에서 직접 확인한다.
+
+**Why:** 테스트를 유지하지 않는 레포에 테스트 파일을 두면 관리되지 않은 채 남는다.
+
+## [workflow-docs] 워크플로우 산출물
+
+`docs/suberpowers/`의 spec, plan 문서는 커밋하지 않고, 구현이 끝나면 삭제한다.
+
+**Why:** 구현을 위한 임시 산출물이며 레포 히스토리에 남기지 않는 것이 이 레포의 원칙이다.
+````
+
+- [ ] **Step 8: 프로젝트 파일 작성 (omar-front-ctrl-room)**
+
+`~/.claude/brownfield-navigator/orgs/pnpt/projects/omar-front-ctrl-room.md`
+
+````markdown
+---
+match-remotes:
+  - "*pnpt-ds/omar-front-ctrl-room"
+---
+
+# omar-front-ctrl-room
+
+## [tests] 테스트 코드
+
+테스트는 작업 검증용으로 작성하고 실행하되 커밋하지 않는다. `git add`에 `*.test.ts`를 넣지 않고, `git status`를 깨끗하게 하려면 로컬 전용인 `.git/info/exclude`를 쓴다.
+
+**Why:** 이 레포에는 테스트를 커밋하는 관례가 없다.
+
+## [comment-style] 주석 형식
+
+주석은 과하게 쓰기 쉬우므로 줄인다.
+
+- 짧으면 명사형(`~함`, `~음`), 설명이 필요하면 평서형(`~한다`)으로 쓴다. 한 문장에 하나씩 쓴다
+- 코드가 이미 말하는 것을 한국어로 다시 쓰지 않는다. 예를 들어 `.catch(() => [])` 옆에 "조회가 실패해도 목록은 그대로 보여준다"를 달지 않는다
+- 표가 말하는 것을 문장으로 반복하지 않고, 파일 헤더에서 말한 원칙을 함수마다 반복하지 않는다
+- 설계 배경, 규칙 절(`## 캡처 시점 규칙` 같은 것), 구조 표시(`## 공개 인터페이스` 같은 것)는 넣지 않는다
+- 결과를 나열하지 말고 목적을 한 마디로 쓴다 (`외부로 노출되지 않도록 non-enumerable 로 저장`)
+- 이 파일을 고치는 사람이 실제로 밟는 함정은 남긴다 (예: `라우트 목록으로 routes.ts 금지, 페이지 컴포넌트 97개를 끌고 옴`)
+- 낯선 용어는 괄호로 실제 동작을 한 번만 적는다 (`캡처(발송)`)
+
+**Why:** 사용자가 `src/utils/sentry/meta.ts`, `report.ts`를 직접 정리해 준 형태가 기준이다.
+
+## [simple-git-guidance] git 명령 안내
+
+사용자가 직접 실행할 git 명령을 안내할 때 지킨다.
+
+- 가장 단순한 선택지를 먼저 제시한다. 예: 이력을 고치지 않고 다음 커밋에서 `git rm --cached`만 하는 방법. 이력 재작성은 필요할 때 두 번째 안으로 둔다
+- 손으로 파일을 옮기거나 경로를 여러 번 입력하는 단계를 넣지 않는다. 불가피하면 한 번에 붙여 넣는 스크립트 하나로 준다
+- rebase, reset, fixup 같은 이력 재작성 명령은 스크래치에 `git clone`한 복제본을 같은 상태(미커밋 변경은 `git diff --binary`로 적용, 미추적 파일 포함)로 만들어 끝까지 실행해 본 뒤 안내한다
+- 복제본에는 `user.email`, `user.name`, `user.signingkey`를 로컬 설정으로 넣어야 서명 설정까지 원본과 같게 재현된다
+- 결과는 커밋 내용 diff, 작업 트리 변경 수, 미추적 파일, stash가 비어 있는지까지 확인하고 안내한다
+
+**Why:** 검증 없이 안내한 리베이스가 실패했고, 파일을 손으로 옮기는 단계에서 테스트 파일 이름이 뒤바뀌었다.
+````
+
+- [ ] **Step 9: 프로젝트 파일 작성 (front-space-petco)**
+
+`~/.claude/brownfield-navigator/orgs/pnpt/projects/front-space-petco.md`
+
+````markdown
+---
+match-remotes:
+  - "*pnpt-ds/front-space-petco"
+---
+
+# front-space-petco
+
+## [capture-location] 화면 캡처 저장 위치
+
+작업 결과 화면 캡처는 `~/Desktop/test screen/<티켓번호>/`(예: `MVDV-9736`) 하위 디렉터리를 만들어 저장한다. 스크래치 디렉터리에 두지 않는다. 해당 화면의 데이터가 없으면 mock으로 상황을 만들어 캡처해도 된다.
+
+**Why:** 사용자가 지정한 캡처 보관 위치다.
+````
+
+- [ ] **Step 10: 실제 레포 매칭 확인**
+
+실행:
+
+```bash
+CG=plugins/brownfield-navigator/bin/compose-guide
+for d in ~/repositories/fez-front-taap ~/repositories/omar-front-ctrl-room ~/repositories/front-space-petco ~/repositories/fez-front-ctrl-central ~/repositories/fez-front-court ~/repositories/front-taap-stpm ~/repositories/coffee-order ~/personal/tagatigi ~/repositories ~/repositories/fez-front-taap/src; do
+  out="$(bash "$CG" "$d")"
+  printf '%s | %s | %s | 경고 %s\n' "$(basename "$d")" \
+    "$(printf '%s\n' "$out" | grep -m1 '^- 조직' || echo '주입 없음')" \
+    "$(printf '%s\n' "$out" | grep -m1 '^- 프로젝트 파일' || echo '-')" \
+    "$(printf '%s\n' "$out" | grep -c '^## brownfield-navigator 경고')"
+done
+```
+
+기대:
+
+```
+fez-front-taap | - 조직: pnpt (근거: remote git@github.com:pnpt-ds/fez-front-taap) | - 프로젝트 파일: fez-front-taap | 경고 0
+omar-front-ctrl-room | - 조직: pnpt (근거: remote git@github.com:pnpt-ds/omar-front-ctrl-room) | - 프로젝트 파일: omar-front-ctrl-room | 경고 0
+front-space-petco | - 조직: pnpt (근거: remote git@github.com:pnpt-ds/front-space-petco) | - 프로젝트 파일: front-space-petco | 경고 0
+fez-front-ctrl-central | - 조직: pnpt (근거: remote git@github.com:pnpt-ds/fez-front-ctrl-central) | - 프로젝트 파일: fez-front-ctrl-central | 경고 0
+fez-front-court | - 조직: pnpt (근거: remote git@github.com:pnpt-ds/fez-front-court) | - | 경고 0
+front-taap-stpm | - 조직: pnpt (근거: remote git@github.com:pnpt-ds/front-taap-stpm) | - | 경고 0
+coffee-order | 주입 없음 | - | 경고 0
+tagatigi | 주입 없음 | - | 경고 0
+repositories | 주입 없음 | - | 경고 0
+src | - 조직: pnpt (근거: remote git@github.com:pnpt-ds/fez-front-taap) | - 프로젝트 파일: fez-front-taap | 경고 0
+```
+
+- [ ] **Step 11: 교체 결과 확인**
+
+실행: `bash plugins/brownfield-navigator/bin/compose-guide ~/repositories/fez-front-taap | grep -E '^## \[(tests|workflow-docs|comment-style|commit-by-user)\]'`
+기대:
+
+```
+## [tests] 테스트 코드 (프로젝트: fez-front-taap)
+## [comment-style] 주석 형식 (조직: pnpt)
+## [commit-by-user] 커밋은 직접 (개인)
+## [workflow-docs] 워크플로우 산출물 (프로젝트: fez-front-taap)
+```
+
+---
+
+### Task 13: 실제 세션 주입 확인 (`--plugin-dir`, 커밋 없음)
+
+설치하지 않고 `--plugin-dir`로 플러그인을 불러와 헤드리스 세션에서 훅 주입을 확인한다. 작업 디렉터리를 바꾸지 않도록 서브셸에서 실행한다.
+
+- [ ] **Step 1: 사내 레포와 개인 레포에서 확인**
+
+실행:
+
+```bash
+PLUGIN_DIR="$PWD/plugins/brownfield-navigator"
+PROMPT="세션 컨텍스트에 '# brownfield-navigator 가이드'로 시작하는 내용이 있으면 그 안의 '- 조직:'으로 시작하는 줄과 '- 프로젝트 파일:'로 시작하는 줄을 그대로 출력하라. 없으면 NONE 한 단어만 출력하라. 도구는 쓰지 마라."
+for d in ~/repositories/fez-front-taap ~/repositories/coffee-order ~/personal/tagatigi; do
+  echo "=== $(basename "$d")"
+  (cd "$d" && claude -p --model claude-haiku-4-5-20251001 --plugin-dir "$PLUGIN_DIR" "$PROMPT")
+done
+```
+
+기대:
+
+```
+=== fez-front-taap
+- 조직: pnpt (근거: remote git@github.com:pnpt-ds/fez-front-taap)
+- 프로젝트 파일: fez-front-taap
+=== coffee-order
+NONE
+=== tagatigi
+NONE
+```
+
+---
+
+### Task 14: 설치와 사용자 확인 (사용자 승인 필요)
+
+사용자 설정을 바꾸거나 외부에 공개하는 단계이므로 각 Step 전에 사용자에게 확인받는다.
+
+- [ ] **Step 1: 로컬 마켓플레이스로 설치 (사용자 승인 후)**
+
+실행: `claude plugin marketplace add ~/personal/brownfield-navigator && claude plugin install brownfield-navigator@brownfield-navigator`
+기대: 마켓플레이스 추가와 플러그인 설치 성공 메시지
+
+- [ ] **Step 2: 수동 호출 확인 (사용자가 대화형 세션에서 실행)**
+
+사용자에게 안내한다: `~/repositories`에서 새 세션을 시작하고 `/brownfield-navigator:brownfield-navigator fez-front-taap 작업할 거야`를 입력한다.
+기대: Claude가 `compose-guide --manual`을 실행하고 "pnpt 가이드를 이 세션에 적용함"이라고 알린다
+
+- [ ] **Step 3: 수집 스킬 재실행 확인 (사용자가 대화형 세션에서 실행)**
+
+사용자에게 안내한다: `/brownfield-navigator:harvest-profile pnpt`를 실행한다.
+기대: 기존 프로필을 덮어쓰지 않고, 빠진 규칙이 있으면 diff로 제안하며, 정리 후보 메모리 목록(예: 6개 레포의 `never-base-on-shared-remote-branch.md`는 전역 CLAUDE.md와 중복)을 보고한다
+
+- [ ] **Step 4: GitHub 공개 (사용자 승인 후)**
+
+사용자에게 공개 범위(public 또는 private)를 확인받은 뒤 `june20516/brownfield-navigator` 레포를 만들고 push한다. 개인 계정 push는 HTTPS와 gh 토큰을 쓴다.
+
+실행: `gh repo create june20516/brownfield-navigator --<사용자가 고른 공개 범위: public 또는 private> --source . --push`
+기대: 레포 생성과 `main` push 성공. 이후 `/plugin marketplace add june20516/brownfield-navigator`로 설치하면 `${CLAUDE_PLUGIN_ROOT}`가 캐시 경로로 바뀌므로 Task 13을 한 번 더 확인한다

@@ -58,6 +58,10 @@ brownfield-navigator/
 └── plugins/brownfield-navigator/
     ├── .claude-plugin/plugin.json         # version 0.1.0
     ├── bin/compose-guide                  # 매칭과 병합 (훅과 스킬이 함께 사용)
+    ├── lib/
+    │   ├── profile.sh                     # frontmatter 파싱, 참고 파일 description
+    │   ├── match.sh                       # remote 정규화, 경로·remote 매칭
+    │   └── sections.sh                    # 규칙 섹션 추출, 층 병합, 출력
     ├── hooks/
     │   ├── hooks.json
     │   ├── run-hook.cmd                   # suberpower 파일 그대로 복사
@@ -71,8 +75,17 @@ brownfield-navigator/
     │   ├── project.md
     │   └── reference.md
     └── tests/
-        └── compose-guide.test.sh
+        ├── test-helpers.sh                # 단언, 테스트 실행, 픽스처
+        ├── run-all.sh
+        ├── profile.test.sh
+        ├── match.test.sh
+        ├── sections.test.sh
+        ├── compose-guide.test.sh
+        ├── session-start.test.sh
+        └── templates.test.sh              # 템플릿이 경고 없이 병합되는지
 ```
+
+플러그인 스킬은 `/<플러그인>:<스킬>` 형식으로 호출한다: `/brownfield-navigator:brownfield-navigator`, `/brownfield-navigator:harvest-profile`.
 
 ### 3.2 사용자 프로필 홈
 
@@ -169,7 +182,7 @@ compose-guide [--manual] [대상 디렉터리]    # 대상을 생략하면 현�
 5. **적용 값 결정:** 매칭된 프로젝트 파일 중 `apply`가 있는 파일의 값(여러 개면 이름순 마지막)을 쓰고, 없으면 조직 값을 쓴다. `--manual`이면 `auto`
 6. **조직 분류**
    - `off`: 제외한다
-   - `suggest`: 안내문 목록에 넣는다. 안내문은 `<org> 가이드를 적용할 수 있음. /brownfield-navigator로 불러오기`
+   - `suggest`: 안내문 목록에 넣는다. 안내문은 `<org> 가이드를 적용할 수 있음. /brownfield-navigator:brownfield-navigator 로 불러오기`
    - `auto`: 병합 대상이다. `auto` 조직이 2개 이상이면 이름순 첫 조직만 병합하고 경고를 붙인다 (`여러 조직이 매칭됨: a, b. a만 적용함. 매칭 조건을 좁힐 것`)
 7. **병합** (병합 대상 조직이 있을 때만)
    - 층 순서: 코어 → 조직 → 개인 → 프로젝트(이름순)
@@ -209,7 +222,7 @@ compose-guide [--manual] [대상 디렉터리]    # 대상을 생략하면 현�
     2. 작업 대상 경로를 정한다 (사용자가 말한 레포, 없으면 cwd)
     3. `"${CLAUDE_PLUGIN_ROOT}/bin/compose-guide" --manual <경로>`를 실행한다
     4. 출력에 병합된 가이드가 있으면 이 세션에 적용한다고 한 줄로 알리고 적용한다
-    5. 없으면 매칭되는 프로필이 없다고 알리고(경고가 있으면 함께 전달) 두 가지를 제안한다: 이번 세션에 코어 원칙만 적용하기, `/harvest-profile`로 이 레포 등록하기
+    5. 없으면 매칭되는 프로필이 없다고 알리고(경고가 있으면 함께 전달) 두 가지를 제안한다: 이번 세션에 코어 원칙만 적용하기, `/brownfield-navigator:harvest-profile`로 이 레포 등록하기
   - 코어 규칙 섹션 (8장)
 
 ### 7.2 `harvest-profile` (수집)
@@ -373,15 +386,15 @@ court, stpm은 달라지는 규칙이 없어 파일을 만들지 않는다.
 
 - `~/repositories/fez-front-taap`에서 시작하면 가이드가 주입되고 `[tests]`가 프로젝트 출처로 표시됨
 - `~/personal/tagatigi`, `~/repositories/coffee-order`에서는 주입되지 않음
-- `~/repositories`에서 시작한 뒤 `/brownfield-navigator`를 호출해 대상 레포를 지정하면 가이드가 적용됨
-- bran 프로필 작성 후 `/harvest-profile`을 재실행해 누락 제안 여부 확인
+- `~/repositories`에서 시작한 뒤 `/brownfield-navigator:brownfield-navigator`를 호출해 대상 레포를 지정하면 가이드가 적용됨
+- bran 프로필 작성 후 `/brownfield-navigator:harvest-profile`을 재실행해 누락 제안 여부 확인
 
 ## 12. 설치와 배포
 
 1. 로컬 마켓플레이스로 설치해 검증한다 (`/plugin marketplace add ~/personal/brownfield-navigator`). 로컬 설치는 캐시로 복사하지 않고 제자리에서 로드하므로 `${CLAUDE_PLUGIN_ROOT}`가 레포 경로를 가리킨다
 2. GitHub 레포 생성과 push는 외부 공개 작업이므로 구현 완료 후 사용자 확인을 받고 진행한다
 3. GitHub 설치로 전환한 뒤에는 `${CLAUDE_PLUGIN_ROOT}`가 캐시 경로로 바뀌므로, 11.3 실제 세션 확인을 한 번 더 수행한다
-4. README에 다른 사용자를 위한 설치, `/harvest-profile` 실행, 프로필 형식 설명을 포함한다
+4. README에 다른 사용자를 위한 설치, `/brownfield-navigator:harvest-profile` 실행, 프로필 형식 설명을 포함한다
 
 ## 13. 범위 밖
 
