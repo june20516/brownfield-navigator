@@ -67,6 +67,33 @@ test_warns_on_unsupported_key() {
   assert_not_contains "$parsed" "error=" "지원하지 않는 키는 실패가 아님"
 }
 
+test_ignores_nested_values_of_unsupported_keys() {
+  write_lines "$TEST_TMP/profile.md" \
+    "---" \
+    "tags:" \
+    "  - legacy" \
+    "metadata:" \
+    "  owner: team-a" \
+    "apply: auto" \
+    "match-remotes:" \
+    '  - "*acme/*"' \
+    "---"
+  local parsed
+  parsed="$(parse_profile_frontmatter "$TEST_TMP/profile.md")"
+  assert_not_contains "$parsed" "error=" "지원하지 않는 키의 하위 값은 실패가 아님"
+  assert_contains "$parsed" "warning=지원하지 않는 키 무시: tags" "리스트 값을 가진 키 경고"
+  assert_contains "$parsed" "warning=지원하지 않는 키 무시: metadata" "하위 키를 가진 키 경고"
+  assert_contains "$parsed" "apply=auto
+remote=*acme/*" "무시한 키 뒤의 지원 키는 계속 파싱"
+}
+
+test_fails_on_list_key_without_items() {
+  write_lines "$TEST_TMP/before-key.md" "---" "match-paths:" "apply: auto" "---"
+  write_lines "$TEST_TMP/before-close.md" "---" "match-remotes:" "---"
+  assert_contains "$(parse_profile_frontmatter "$TEST_TMP/before-key.md")" "error=match-paths 에 항목이 없음" "다음 키 전에 항목이 없으면 실패"
+  assert_contains "$(parse_profile_frontmatter "$TEST_TMP/before-close.md")" "error=match-remotes 에 항목이 없음" "닫는 --- 전에 항목이 없으면 실패"
+}
+
 test_reads_reference_description() {
   write_lines "$TEST_TMP/ref.md" "---" 'description: "레포 지도"' "---" "본문"
   assert_equals "레포 지도" "$(read_reference_description "$TEST_TMP/ref.md")" "description 값 추출"
@@ -85,6 +112,8 @@ run_test test_fails_without_closing_delimiter
 run_test test_fails_on_invalid_apply
 run_test test_fails_on_flow_list
 run_test test_warns_on_unsupported_key
+run_test test_ignores_nested_values_of_unsupported_keys
+run_test test_fails_on_list_key_without_items
 run_test test_reads_reference_description
 run_test test_reference_without_description_is_empty
 finish_tests

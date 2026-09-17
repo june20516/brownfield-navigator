@@ -24,16 +24,27 @@ parse_profile_frontmatter() {
       failed = 1
       exit
     }
+    # 값을 비워 둔 리스트 키에 블록 항목이 하나도 없으면 실패 (빈 리스트는 [] 로 적어야 함)
+    function close_list() {
+      if (list_kind != "" && list_item_count == 0) fail(list_key " 에 항목이 없음 (빈 리스트는 [] 로 적음)")
+      list_kind = ""
+      list_key = ""
+      list_item_count = 0
+    }
     NR == 1 {
       if ($0 != "---") fail("frontmatter 없음 (첫 줄이 ---가 아님)")
       in_frontmatter = 1
       next
     }
     in_frontmatter {
-      if ($0 == "---") { closed = 1; exit }
+      if ($0 == "---") { close_list(); closed = 1; exit }
       if ($0 ~ /^[[:space:]]*(#.*)?$/) next
+      # 지원하지 않는 키 아래의 들여쓴 값(리스트 항목, 하위 키)은 그 키와 함께 무시
+      if (ignoring_unsupported_key && $0 ~ /^[[:space:]]/) next
       if ($0 ~ /^[[:space:]]*-[[:space:]]/) {
+        if (ignoring_unsupported_key) next
         if (list_kind == "") fail("어느 키의 리스트 항목인지 알 수 없음: " trim($0))
+        list_item_count++
         item = $0
         sub(/^[[:space:]]*-[[:space:]]+/, "", item)
         item = trim(strip_comment(item))
@@ -44,15 +55,21 @@ parse_profile_frontmatter() {
       if (match($0, /^[A-Za-z0-9_-]+:/)) {
         key = substr($0, 1, RLENGTH - 1)
         value = trim(strip_comment(substr($0, RLENGTH + 1)))
-        list_kind = ""
+        close_list()
+        ignoring_unsupported_key = 0
         if (key == "apply") {
           if (value !~ /^(auto|suggest|off)$/) fail("apply 값은 auto, suggest, off 중 하나여야 함: " value)
           print "apply=" value
         } else if (key == "match-remotes" || key == "match-paths") {
-          if (value == "") list_kind = (key == "match-remotes") ? "remote" : "path"
-          else if (value != "[]") fail(key " 는 블록 리스트만 지원함: " value)
+          if (value == "") {
+            list_kind = (key == "match-remotes") ? "remote" : "path"
+            list_key = key
+          } else if (value != "[]") {
+            fail(key " 는 블록 리스트만 지원함: " value)
+          }
         } else {
           print "warning=지원하지 않는 키 무시: " key
+          ignoring_unsupported_key = 1
         }
         next
       }
