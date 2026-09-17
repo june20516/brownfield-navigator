@@ -26,11 +26,13 @@ test_accepts_empty_list_and_comment_lines() {
     "---" \
     "# 매칭 조건" \
     "" \
+    "apply : off" \
     "match-remotes: []" \
-    "match-paths:" \
+    "match-paths :" \
     '  - "~/work/*"' \
     "---"
-  assert_equals "path=~/work/*" "$(parse_profile_frontmatter "$TEST_TMP/profile.md")" "빈 리스트와 주석 줄 처리"
+  assert_equals "apply=off
+path=~/work/*" "$(parse_profile_frontmatter "$TEST_TMP/profile.md")" "빈 리스트, 주석 줄, 콜론 앞 공백 처리"
 }
 
 test_fails_without_frontmatter() {
