@@ -27,6 +27,7 @@ parse_profile_frontmatter() {
     }
     # 값을 읽음. 따옴표로 시작하면 닫는 따옴표까지가 값이고 그 뒤에는 주석만 올 수 있음. 아니면 " #" 뒤가 주석
     function read_value(text,    quote, closing_position, rest) {
+      if (text ~ /^[[:space:]]+#/) return ""
       text = trim(text)
       quote = substr(text, 1, 1)
       if (quote == "\"" || quote == squote) {
@@ -60,7 +61,7 @@ parse_profile_frontmatter() {
         if (list_key == "") fail("어느 키의 리스트 항목인지 알 수 없음: " trim($0))
         list_item_count++
         item = $0
-        sub(/^[[:space:]]*-[[:space:]]+/, "", item)
+        sub(/^[[:space:]]*-/, "", item)
         item = read_value(item)
         if (item != "") print list_output_name "=" item
         next

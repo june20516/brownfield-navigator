@@ -33,12 +33,13 @@ test_accepts_empty_list_comments_and_spaced_keys() {
     "" \
     "apply : off" \
     "match-remotes: []" \
-    "match-paths :" \
+    "match-paths :  # 경로 목록" \
     '  - "~/work/*"' \
+    "  - # 나중에 추가" \
     "---"
   write_lines "$TEST_TMP/quoted-apply.md" "---" "apply: 'suggest'" "---"
   assert_equals "apply=off
-path=~/work/*" "$(parse_profile_frontmatter "$TEST_TMP/profile.md")" "빈 리스트, 주석 줄, 콜론 앞 공백 처리"
+path=~/work/*" "$(parse_profile_frontmatter "$TEST_TMP/profile.md")" "빈 리스트, 주석 줄, 키 뒤 주석, 주석만 있는 항목, 콜론 앞 공백 처리"
   assert_equals "apply=suggest" "$(parse_profile_frontmatter "$TEST_TMP/quoted-apply.md")" "따옴표로 감싼 apply 값"
 }
 
