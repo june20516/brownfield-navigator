@@ -428,10 +428,13 @@ test_fails_on_flow_list() {
 }
 
 test_warns_on_unsupported_key() {
-  write_lines "$TEST_TMP/profile.md" "---" "name: acme" "apply: auto" "---"
+  write_lines "$TEST_TMP/profile.md" "---" "name: acme" "설명: 사내 레포" "owner.team: web" '"quoted": x' "apply: auto" "---"
   local parsed
   parsed="$(parse_profile_frontmatter "$TEST_TMP/profile.md")"
   assert_contains "$parsed" "warning=지원하지 않는 키 무시: name" "지원하지 않는 키는 경고"
+  assert_contains "$parsed" "warning=지원하지 않는 키 무시: 설명" "한글 키도 경고"
+  assert_contains "$parsed" "warning=지원하지 않는 키 무시: owner.team" "점이 들어간 키도 경고"
+  assert_contains "$parsed" 'warning=지원하지 않는 키 무시: "quoted"' "따옴표로 감싼 키도 경고"
   assert_contains "$parsed" "apply=auto" "경고 뒤에도 파싱 계속"
   assert_not_contains "$parsed" "error=" "지원하지 않는 키는 실패가 아님"
 }
@@ -552,7 +555,8 @@ parse_profile_frontmatter() {
         if (item != "") print list_kind "=" item
         next
       }
-      if (match($0, /^[A-Za-z0-9_-]+:/)) {
+      # 들여쓰지 않았고 - 나 # 로 시작하지 않는 "이름:" 줄을 키로 봄 (한글, 점, 따옴표가 들어간 키도 경고 대상)
+      if (match($0, /^[^[:space:]#-][^:]*:/)) {
         key = substr($0, 1, RLENGTH - 1)
         value = trim(strip_comment(substr($0, RLENGTH + 1)))
         close_list()
