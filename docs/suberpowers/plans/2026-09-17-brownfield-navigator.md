@@ -17,7 +17,7 @@
 - 모든 명령은 레포 루트 `~/personal/brownfield-navigator`에서 실행한다
 - 스크립트와 테스트는 bash 3.2에서 동작해야 한다. 연관 배열(`declare -A`), `mapfile`, `${var,,}`를 쓰지 않고, 픽스처는 heredoc 대신 `printf`로 만든다
 - macOS의 `bash`는 `/bin/bash` 3.2다. 테스트는 `bash plugins/brownfield-navigator/tests/<이름>.test.sh`, 전체는 `bash plugins/brownfield-navigator/tests/run-all.sh`로 실행한다
-- 파일 내용은 이 계획의 코드 블록과 **정확히 같게** 쓴다. 모든 코드 블록은 스크래치 시제품에서 bash 3.2로 전체 테스트(50개)와 `claude plugin validate` 통과를 확인한 내용이다
+- 파일 내용은 이 계획의 코드 블록과 **정확히 같게** 쓴다. 모든 코드 블록은 스크래치 시제품에서 bash 3.2로 전체 테스트(52개)와 `claude plugin validate` 통과를 확인한 내용이다
 - 이 레포는 개인 레포이므로 커밋 메시지는 `type: 한국어 설명` 형식에 attribution trailer 두 줄을 붙인다. 각 Task의 Commit step에 들어 있는 trailer는 계획 작성 세션 기준이므로, 실행 세션의 attribution 안내가 다르면 그 안내를 따른다
 - 테스트가 실패하면 코드 블록과 파일이 같은지부터 확인한다 (`diff`)
 
@@ -1564,6 +1564,18 @@ test_warns_on_unreadable_profile_files() {
   assert_contains "$output" "## [acme-rule]" "읽을 수 있는 조직 프로필은 계속 병합"
 }
 
+test_invalid_utf8_in_profile_keeps_full_guide() {
+  write_lines "$TEST_TMP/profiles/orgs/acme/profile.md" \
+    "---" "match-remotes:" '  - "*acme/*"' "---" \
+    "## [first-rule] 첫 규칙" "잘못된 바이트 $(printf '\261\333') 포함" \
+    "## [second-rule] 둘째 규칙" "둘째 본문"
+  make_git_repo "$TEST_TMP/app" "git@github.com:acme/app.git"
+  local output
+  output="$(LC_ALL=en_US.UTF-8 run_compose_guide "$TEST_TMP/app")"
+  assert_contains "$output" "## [second-rule] 둘째 규칙 (조직: acme)" "잘못된 UTF-8 뒤의 규칙도 빠지지 않음"
+  assert_not_contains "$output" "towc" "awk 변환 오류가 없음"
+}
+
 test_unsupported_key_warning_with_guide() {
   write_org_profile acme "name: acme" "match-remotes:" '  - "*acme/*"'
   make_git_repo "$TEST_TMP/app" "git@github.com:acme/app.git"
@@ -1613,6 +1625,7 @@ run_test test_multiple_projects_use_last_apply_and_warn
 run_test test_manual_mode_merges_suggest_and_off
 run_test test_warnings_only_when_nothing_matches
 run_test test_warns_on_unreadable_profile_files
+run_test test_invalid_utf8_in_profile_keeps_full_guide
 run_test test_unsupported_key_warning_with_guide
 run_test test_two_auto_orgs_apply_first_only
 run_test test_lists_references
@@ -1622,7 +1635,7 @@ finish_tests
 - [ ] **Step 2: 테스트를 실행해 실패 확인**
 
 실행: `bash plugins/brownfield-navigator/tests/compose-guide.test.sh; echo "exit=$?"`
-기대: `bin/compose-guide: No such file or directory`, 마지막 줄 `compose-guide.test.sh: 19개 중 19개 실패`, `exit=1`
+기대: `bin/compose-guide: No such file or directory`, 마지막 줄 `compose-guide.test.sh: 20개 중 20개 실패`, `exit=1`
 
 - [ ] **Step 3: 구현 작성**
 
@@ -1639,6 +1652,9 @@ finish_tests
 # bash 3.2 호환 (macOS 기본 /bin/bash)
 
 set -u
+# 프로필에 잘못된 UTF-8 바이트(예: 다른 인코딩으로 저장한 파일)가 섞여도 awk, sed가 중간에 멈춰
+# 뒤쪽 규칙이 조용히 빠지지 않게 바이트 단위로 처리
+export LC_ALL=C
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 PLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
@@ -1878,12 +1894,12 @@ exit 0
 - [ ] **Step 4: 실행 권한 부여 후 테스트를 실행해 통과 확인**
 
 실행: `chmod +x plugins/brownfield-navigator/bin/compose-guide && bash plugins/brownfield-navigator/tests/compose-guide.test.sh; echo "exit=$?"`
-기대: `compose-guide.test.sh: 19개 중 0개 실패`, `exit=0`
+기대: `compose-guide.test.sh: 20개 중 0개 실패`, `exit=0`
 
 - [ ] **Step 5: 전체 테스트 확인**
 
 실행: `bash plugins/brownfield-navigator/tests/run-all.sh; echo "exit=$?"`
-기대: compose-guide 19개, match 8개, profile 14개, sections 4개 모두 `0개 실패`, 마지막 줄 `테스트 파일 4개 모두 통과`, `exit=0`
+기대: compose-guide 20개, match 8개, profile 14개, sections 4개 모두 `0개 실패`, 마지막 줄 `테스트 파일 4개 모두 통과`, `exit=0`
 
 - [ ] **Step 6: Commit**
 
@@ -1921,11 +1937,12 @@ run_session_start() {
 }
 
 # 훅 출력 JSON을 파싱해 additionalContext 값을 출력. JSON이 올바르지 않으면 INVALID_JSON 출력
+# Claude Code처럼 잘못된 UTF-8 바이트는 대체 문자로 읽음
 read_additional_context() {
   python3 -c '
 import json, sys
 try:
-    data = json.load(sys.stdin)
+    data = json.loads(sys.stdin.buffer.read().decode("utf-8", "replace"))
     sys.stdout.write(data["hookSpecificOutput"]["additionalContext"])
 except Exception as error:
     sys.stdout.write("INVALID_JSON: %s" % error)
@@ -1949,6 +1966,16 @@ test_outputs_valid_json_with_special_characters() {
   assert_contains "$context" "# brownfield-navigator 가이드" "가이드가 additionalContext에 들어감"
   assert_contains "$context" "$(printf '따옴표 "q" 백슬래시 \\ 탭\t끝')" "따옴표, 백슬래시, 탭 보존"
   assert_contains "$context" "폼피드와 제어문자 제거" "그 밖의 제어문자는 제거"
+}
+
+test_keeps_guide_after_invalid_utf8() {
+  write_acme_profile \
+    "## [first-rule] 첫 규칙" "잘못된 바이트 $(printf '\261\333') 포함" \
+    "## [second-rule] 둘째 규칙" "둘째 본문"
+  make_git_repo "$TEST_TMP/app" "git@github.com:acme/app.git"
+  local context
+  context="$(LC_ALL=en_US.UTF-8 run_session_start "{\"cwd\":\"$TEST_TMP/app\"}" | read_additional_context)"
+  assert_contains "$context" "## [second-rule] 둘째 규칙 (조직: acme)" "잘못된 UTF-8 뒤의 규칙도 JSON에 들어감"
 }
 
 test_outputs_nothing_without_match() {
@@ -1975,6 +2002,7 @@ test_prefers_cwd_over_project_dir_env() {
 }
 
 run_test test_outputs_valid_json_with_special_characters
+run_test test_keeps_guide_after_invalid_utf8
 run_test test_outputs_nothing_without_match
 run_test test_falls_back_to_project_dir_env
 run_test test_prefers_cwd_over_project_dir_env
@@ -1984,7 +2012,7 @@ finish_tests
 - [ ] **Step 2: 테스트를 실행해 실패 확인**
 
 실행: `bash plugins/brownfield-navigator/tests/session-start.test.sh; echo "exit=$?"`
-기대: `hooks/session-start: No such file or directory`, 마지막 줄 `session-start.test.sh: 4개 중 4개 실패`, `exit=1`
+기대: `hooks/session-start: No such file or directory`, 마지막 줄 `session-start.test.sh: 5개 중 5개 실패`, `exit=1`
 
 - [ ] **Step 3: 훅 스크립트 작성**
 
@@ -1992,7 +2020,8 @@ finish_tests
 
 ````bash
 #!/usr/bin/env bash
-# SessionStart 훅: 세션을 시작한 디렉터리에 맞는 brownfield-navigator 가이드를 컨텍스트로 주입
+# SessionStart 훅: 훅 입력의 작업 디렉터리(cwd)에 맞는 brownfield-navigator 가이드를 컨텍스트로 주입
+# startup, clear, compact 때 실행되므로 그 시점의 작업 디렉터리 기준
 # 어떤 경우에도 세션을 막지 않음 (항상 exit 0)
 # bash 3.2 호환
 
@@ -2022,8 +2051,9 @@ resolve_target_dir() {
 # JSON 문자열 값으로 쓸 수 있게 이스케이프. 탭, 줄바꿈, CR 이외의 제어문자는 제거
 # bash 3.2의 ${var//a/b} 치환은 입력이 길수록 급격히 느려져(20KB에 약 2초) awk로 처리
 # 백슬래시는 "&&"(매칭 텍스트 반복)로 두 배로 만들어 awk 구현마다 다른 치환 문자열 해석을 피함
+# awk는 LC_ALL=C 로 실행. UTF-8 로캘에서는 잘못된 바이트를 만나면 멈춰 가이드 뒷부분이 빠짐
 escape_for_json() {
-  printf '%s' "$1" | LC_ALL=C tr -d '\001-\010\013\014\016-\037' | awk '
+  printf '%s' "$1" | LC_ALL=C tr -d '\001-\010\013\014\016-\037' | LC_ALL=C awk '
     BEGIN { ORS = "" }
     {
       gsub(/\\/, "&&")
@@ -2133,7 +2163,7 @@ exec bash "${SCRIPT_DIR}/${SCRIPT_NAME}" "$@"
 - [ ] **Step 6: 실행 권한 부여 후 테스트를 실행해 통과 확인**
 
 실행: `chmod +x plugins/brownfield-navigator/hooks/session-start plugins/brownfield-navigator/hooks/run-hook.cmd && bash plugins/brownfield-navigator/tests/session-start.test.sh; echo "exit=$?"`
-기대: `session-start.test.sh: 4개 중 0개 실패`, `exit=0`
+기대: `session-start.test.sh: 5개 중 0개 실패`, `exit=0`
 
 - [ ] **Step 7: 플러그인 검증**
 
