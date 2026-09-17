@@ -26,7 +26,8 @@
 | 파일 | 책임 |
 |---|---|
 | `.claude-plugin/marketplace.json` | 레포를 마켓플레이스로 등록 |
-| `README.md` | 설치, 처음 설정, 프로필 형식, 수동 호출, 주의 사항 |
+| `README.md` | 설치, 처음 설정, 프로필 형식, 수동 호출, 주의 사항 (한국어) |
+| `README.en.md` | `README.md`의 영어판 |
 | `plugins/brownfield-navigator/.claude-plugin/plugin.json` | 플러그인 매니페스트 |
 | `plugins/brownfield-navigator/lib/profile.sh` | 조직·프로젝트 파일 frontmatter 파싱, 참고 파일 description 추출 |
 | `plugins/brownfield-navigator/lib/match.sh` | remote URL 정규화, 경로(상위 디렉터리 포함)와 remote 매칭, 매칭 근거 출력 |
@@ -2131,17 +2132,20 @@ EOF
 
 ---
 
-### Task 11: README
+### Task 11: README (한국어, 영어)
 
 **Files:**
 - Create: `README.md`
+- Create: `README.en.md`
 
-- [ ] **Step 1: README 작성**
+- [ ] **Step 1: 한국어 README 작성**
 
 `README.md`
 
 ````markdown
 # brownfield-navigator
+
+한국어 | [English](README.en.md)
 
 레거시(brownfield) 코드베이스에서 기능을 넓히거나 유지보수할 때, **회사 컨벤션과 기존 코드의 흐름을 따르고 싶은 사용자를 위한** Claude Code 플러그인입니다.
 
@@ -2206,7 +2210,7 @@ match-paths:
 ```
 
 - `apply`: `auto`(규칙 주입), `suggest`(한 줄 안내만), `off`(주입 안 함). 생략하면 `auto`이고, 프로젝트 파일에서 생략하면 조직 값을 따릅니다
-- `match-remotes`: git remote URL과 비교하는 bash glob입니다. URL 끝의 `/`와 `.git`은 떼고 비교합니다
+- `match-remotes`: git remote URL과 비교하는 bash glob입니다. URL 끝의 `/`와 `.git`, `https://user:token@host` 형식의 인증 정보는 떼고 비교합니다
 - `match-paths`: 작업 디렉터리나 그 상위 디렉터리와 비교하는 bash glob입니다. 앞머리 `~`는 홈으로 확장합니다. git을 쓰지 않는다면 이 조건을 씁니다
 - 리스트는 블록 형식만 지원합니다. `["a", "b"]` 형식은 파싱 실패로 무시되고 경고가 남습니다
 - 조직 이름은 `orgs/` 아래 디렉터리 이름, 프로젝트 이름은 파일 이름입니다
@@ -2254,17 +2258,139 @@ claude --plugin-dir plugins/brownfield-navigator
 ```
 ````
 
-- [ ] **Step 2: 전체 테스트와 검증**
+- [ ] **Step 2: 영어 README 작성**
+
+`README.en.md`
+
+````markdown
+# brownfield-navigator
+
+[한국어](README.md) | English
+
+A Claude Code plugin for people who want Claude to **follow their company's conventions and the existing flow of the code** when extending or maintaining a legacy (brownfield) codebase.
+
+Organize the guidance scattered across your project memories into organization, personal, and project profiles. When a session starts, the plugin merges the guide that matches the working directory and injects it. In places that match no profile, such as personal projects, it does nothing.
+
+It is a guide, not an enforcement mechanism. If you want a different approach, Claude follows you.
+
+The bundled core rules and templates are written in Korean. Rules are plain Markdown sections, so you can write your own profiles in any language.
+
+## How it works
+
+| Layer | Contents | Location |
+|---|---|---|
+| Core | Principles for legacy work, independent of company or tools | plugin `skills/brownfield-navigator/SKILL.md` |
+| Organization | Company conventions | `~/.claude/brownfield-navigator/orgs/<org>/profile.md` |
+| Personal | Your preferences for how Claude works with you | `~/.claude/brownfield-navigator/personal.md` |
+| Project | Rules that differ only in a specific repository | `~/.claude/brownfield-navigator/orgs/<org>/projects/<name>.md` |
+
+1. When a session starts, a hook compares the working directory's git remotes and path with each organization profile's match conditions
+2. On a match, it merges `## [id] title` sections in the order core, organization, personal, project. A later layer replaces a section with the same id
+3. The merged guide and a list of reference files are added to the session context
+
+Keep project-specific facts, such as configuration values and pitfalls, in Claude Code project memory as before.
+
+## Installation
+
+```
+/plugin marketplace add june20516/brownfield-navigator
+/plugin install brownfield-navigator@brownfield-navigator
+```
+
+Requirements: Claude Code and bash 3.2 or later. git is needed only for remote conditions.
+
+## First-time setup
+
+If you have accumulated project memories, draft your profiles with the harvest skill.
+
+```
+/brownfield-navigator:harvest-profile
+```
+
+It collects your memories, shows organization candidates, walks through classification and conflict resolution, and writes only what you approve. It never deletes or edits your memories.
+
+To write profiles by hand, copy and edit the files in `plugins/brownfield-navigator/templates/`.
+
+## Profile format
+
+### Organization profile and project file
+
+```markdown
+---
+apply: auto
+match-remotes:
+  - "*your-org/*"
+match-paths:
+  - "~/work/your-org/*"
+---
+
+## [commit-message] Commit messages
+
+Write commit messages as `type: description TICKET-123`.
+
+**Why:** Matches the existing format of the repository history
+```
+
+- `apply`: `auto` (inject rules), `suggest` (one-line hint only), or `off` (inject nothing). It defaults to `auto`, and a project file without it uses the organization's value
+- `match-remotes`: bash globs compared with git remote URLs. A trailing `/`, a trailing `.git`, and credentials such as `https://user:token@host` are removed before comparing
+- `match-paths`: bash globs compared with the working directory or any of its parent directories. A leading `~` expands to your home directory. Use this condition if you don't use git
+- Lists must use block style. Flow style such as `["a", "b"]` fails to parse, and the file is skipped with a warning
+- The organization name is the directory name under `orgs/`, and the project name is the file name
+
+### Rule sections
+
+- A rule runs from `## [id] title` to the next `## ` heading. Ids use lowercase letters, digits, and `-`
+- A section with the same id replaces the earlier one, and a new id is added. The core rule ids are in `skills/brownfield-navigator/SKILL.md`
+- `## ` sections without an id are treated as descriptions and are not merged
+
+### Personal profile
+
+`personal.md` contains only rule sections, without frontmatter. It applies only when an organization profile matches and a guide is merged.
+
+### Reference files
+
+Put a one-line `description:` in the frontmatter of `orgs/<org>/references/<topic>.md`. Only the path and description go into the session, and Claude reads the file when working on something related.
+
+## Loading the guide manually
+
+Invoke the skill if you started the session in a directory that spans several repositories, or if you want the guide in a repository set to `apply: suggest`.
+
+```
+/brownfield-navigator:brownfield-navigator
+```
+
+To inspect the merged result directly, run `compose-guide`.
+
+```bash
+plugins/brownfield-navigator/bin/compose-guide --manual ~/work/your-org/your-repo
+```
+
+## Notes
+
+- Profiles are your own files in `~/.claude/brownfield-navigator/`. Plugin updates don't remove them, but to use them on another machine you need to back them up or sync them yourself. Set the `BROWNFIELD_NAVIGATOR_HOME` environment variable to use a different location
+- Subagents don't receive the session-start injection. Following the core rule `[delegate-with-guide]`, Claude includes the relevant rules in its delegation prompts
+- If two or more `auto` organizations match one repository, only the first one by name is applied, with a warning
+
+## Development
+
+```bash
+bash plugins/brownfield-navigator/tests/run-all.sh
+claude plugin validate plugins/brownfield-navigator
+claude --plugin-dir plugins/brownfield-navigator
+```
+````
+
+- [ ] **Step 3: 전체 테스트와 검증**
 
 실행: `bash plugins/brownfield-navigator/tests/run-all.sh; echo "exit=$?"; claude plugin validate . && claude plugin validate plugins/brownfield-navigator`
 기대: 테스트 파일 6개 모두 `0개 실패`, `exit=0`, 검증 두 번 모두 `✔ Validation passed`
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
-git add README.md
+git add README.md README.en.md
 git commit -F - <<'EOF'
-docs: 설치, 프로필 형식, 사용법을 담은 README 추가
+docs: 설치, 프로필 형식, 사용법을 담은 README 추가 (한국어, 영어)
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01Hpd4mB4Q7hB6xWvD76iD5k
