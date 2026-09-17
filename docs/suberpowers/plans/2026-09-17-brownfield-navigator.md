@@ -17,7 +17,7 @@
 - 모든 명령은 레포 루트 `~/personal/brownfield-navigator`에서 실행한다
 - 스크립트와 테스트는 bash 3.2에서 동작해야 한다. 연관 배열(`declare -A`), `mapfile`, `${var,,}`를 쓰지 않고, 픽스처는 heredoc 대신 `printf`로 만든다
 - macOS의 `bash`는 `/bin/bash` 3.2다. 테스트는 `bash plugins/brownfield-navigator/tests/<이름>.test.sh`, 전체는 `bash plugins/brownfield-navigator/tests/run-all.sh`로 실행한다
-- 파일 내용은 이 계획의 코드 블록과 **정확히 같게** 쓴다. 모든 코드 블록은 스크래치 시제품에서 bash 3.2로 전체 테스트(41개)와 `claude plugin validate` 통과를 확인한 내용이다
+- 파일 내용은 이 계획의 코드 블록과 **정확히 같게** 쓴다. 모든 코드 블록은 스크래치 시제품에서 bash 3.2로 전체 테스트(43개)와 `claude plugin validate` 통과를 확인한 내용이다
 - 이 레포는 개인 레포이므로 커밋 메시지는 `type: 한국어 설명` 형식에 attribution trailer 두 줄을 붙인다. 각 Task의 Commit step에 들어 있는 trailer는 계획 작성 세션 기준이므로, 실행 세션의 attribution 안내가 다르면 그 안내를 따른다
 - 테스트가 실패하면 코드 블록과 파일이 같은지부터 확인한다 (`diff`)
 
@@ -436,6 +436,33 @@ test_warns_on_unsupported_key() {
   assert_not_contains "$parsed" "error=" "지원하지 않는 키는 실패가 아님"
 }
 
+test_ignores_nested_values_of_unsupported_keys() {
+  write_lines "$TEST_TMP/profile.md" \
+    "---" \
+    "tags:" \
+    "  - legacy" \
+    "metadata:" \
+    "  owner: team-a" \
+    "apply: auto" \
+    "match-remotes:" \
+    '  - "*acme/*"' \
+    "---"
+  local parsed
+  parsed="$(parse_profile_frontmatter "$TEST_TMP/profile.md")"
+  assert_not_contains "$parsed" "error=" "지원하지 않는 키의 하위 값은 실패가 아님"
+  assert_contains "$parsed" "warning=지원하지 않는 키 무시: tags" "리스트 값을 가진 키 경고"
+  assert_contains "$parsed" "warning=지원하지 않는 키 무시: metadata" "하위 키를 가진 키 경고"
+  assert_contains "$parsed" "apply=auto
+remote=*acme/*" "무시한 키 뒤의 지원 키는 계속 파싱"
+}
+
+test_fails_on_list_key_without_items() {
+  write_lines "$TEST_TMP/before-key.md" "---" "match-paths:" "apply: auto" "---"
+  write_lines "$TEST_TMP/before-close.md" "---" "match-remotes:" "---"
+  assert_contains "$(parse_profile_frontmatter "$TEST_TMP/before-key.md")" "error=match-paths 에 항목이 없음" "다음 키 전에 항목이 없으면 실패"
+  assert_contains "$(parse_profile_frontmatter "$TEST_TMP/before-close.md")" "error=match-remotes 에 항목이 없음" "닫는 --- 전에 항목이 없으면 실패"
+}
+
 test_reads_reference_description() {
   write_lines "$TEST_TMP/ref.md" "---" 'description: "레포 지도"' "---" "본문"
   assert_equals "레포 지도" "$(read_reference_description "$TEST_TMP/ref.md")" "description 값 추출"
@@ -454,6 +481,8 @@ run_test test_fails_without_closing_delimiter
 run_test test_fails_on_invalid_apply
 run_test test_fails_on_flow_list
 run_test test_warns_on_unsupported_key
+run_test test_ignores_nested_values_of_unsupported_keys
+run_test test_fails_on_list_key_without_items
 run_test test_reads_reference_description
 run_test test_reference_without_description_is_empty
 finish_tests
@@ -462,7 +491,7 @@ finish_tests
 - [ ] **Step 2: 테스트를 실행해 실패 확인**
 
 실행: `bash plugins/brownfield-navigator/tests/profile.test.sh; echo "exit=$?"`
-기대: `lib/profile.sh: No such file or directory`, 마지막 줄 `profile.test.sh: 10개 중 10개 실패`, `exit=1`
+기대: `lib/profile.sh: No such file or directory`, 마지막 줄 `profile.test.sh: 12개 중 12개 실패`, `exit=1`
 
 - [ ] **Step 3: 구현 작성**
 
@@ -495,16 +524,27 @@ parse_profile_frontmatter() {
       failed = 1
       exit
     }
+    # 값을 비워 둔 리스트 키에 블록 항목이 하나도 없으면 실패 (빈 리스트는 [] 로 적어야 함)
+    function close_list() {
+      if (list_kind != "" && list_item_count == 0) fail(list_key " 에 항목이 없음 (빈 리스트는 [] 로 적음)")
+      list_kind = ""
+      list_key = ""
+      list_item_count = 0
+    }
     NR == 1 {
       if ($0 != "---") fail("frontmatter 없음 (첫 줄이 ---가 아님)")
       in_frontmatter = 1
       next
     }
     in_frontmatter {
-      if ($0 == "---") { closed = 1; exit }
+      if ($0 == "---") { close_list(); closed = 1; exit }
       if ($0 ~ /^[[:space:]]*(#.*)?$/) next
+      # 지원하지 않는 키 아래의 들여쓴 값(리스트 항목, 하위 키)은 그 키와 함께 무시
+      if (ignoring_unsupported_key && $0 ~ /^[[:space:]]/) next
       if ($0 ~ /^[[:space:]]*-[[:space:]]/) {
+        if (ignoring_unsupported_key) next
         if (list_kind == "") fail("어느 키의 리스트 항목인지 알 수 없음: " trim($0))
+        list_item_count++
         item = $0
         sub(/^[[:space:]]*-[[:space:]]+/, "", item)
         item = trim(strip_comment(item))
@@ -515,15 +555,21 @@ parse_profile_frontmatter() {
       if (match($0, /^[A-Za-z0-9_-]+:/)) {
         key = substr($0, 1, RLENGTH - 1)
         value = trim(strip_comment(substr($0, RLENGTH + 1)))
-        list_kind = ""
+        close_list()
+        ignoring_unsupported_key = 0
         if (key == "apply") {
           if (value !~ /^(auto|suggest|off)$/) fail("apply 값은 auto, suggest, off 중 하나여야 함: " value)
           print "apply=" value
         } else if (key == "match-remotes" || key == "match-paths") {
-          if (value == "") list_kind = (key == "match-remotes") ? "remote" : "path"
-          else if (value != "[]") fail(key " 는 블록 리스트만 지원함: " value)
+          if (value == "") {
+            list_kind = (key == "match-remotes") ? "remote" : "path"
+            list_key = key
+          } else if (value != "[]") {
+            fail(key " 는 블록 리스트만 지원함: " value)
+          }
         } else {
           print "warning=지원하지 않는 키 무시: " key
+          ignoring_unsupported_key = 1
         }
         next
       }
@@ -558,7 +604,7 @@ read_reference_description() {
 - [ ] **Step 4: 테스트를 실행해 통과 확인**
 
 실행: `bash plugins/brownfield-navigator/tests/profile.test.sh; echo "exit=$?"`
-기대: `ok` 10줄, `profile.test.sh: 10개 중 0개 실패`, `exit=0`
+기대: `ok` 12줄, `profile.test.sh: 12개 중 0개 실패`, `exit=0`
 
 - [ ] **Step 5: Commit**
 
@@ -1649,7 +1695,7 @@ exit 0
 - [ ] **Step 5: 전체 테스트 확인**
 
 실행: `bash plugins/brownfield-navigator/tests/run-all.sh; echo "exit=$?"`
-기대: compose-guide 15개, match 8개, profile 10개, sections 3개 모두 `0개 실패`, 마지막 줄 `테스트 파일 4개 모두 통과`, `exit=0`
+기대: compose-guide 15개, match 8개, profile 12개, sections 3개 모두 `0개 실패`, 마지막 줄 `테스트 파일 4개 모두 통과`, `exit=0`
 
 - [ ] **Step 6: Commit**
 
