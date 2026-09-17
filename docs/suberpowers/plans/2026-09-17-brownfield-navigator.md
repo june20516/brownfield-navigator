@@ -18,7 +18,7 @@
 - 스크립트와 테스트는 bash 3.2에서 동작해야 한다. 연관 배열(`declare -A`), `mapfile`, `${var,,}`를 쓰지 않고, 픽스처는 heredoc 대신 `printf`로 만든다
 - macOS의 `bash`는 `/bin/bash` 3.2다. 테스트는 `bash plugins/brownfield-navigator/tests/<이름>.test.sh`, 전체는 `bash plugins/brownfield-navigator/tests/run-all.sh`로 실행한다
 - 파일 내용은 이 계획의 코드 블록과 **정확히 같게** 쓴다. 모든 코드 블록은 스크래치 시제품에서 bash 3.2로 전체 테스트(41개)와 `claude plugin validate` 통과를 확인한 내용이다
-- 이 레포는 개인 레포이므로 커밋 메시지는 `type: 한국어 설명` 형식에 attribution trailer 두 줄을 붙인다. 각 Task의 Commit step에 그대로 들어 있다
+- 이 레포는 개인 레포이므로 커밋 메시지는 `type: 한국어 설명` 형식에 attribution trailer 두 줄을 붙인다. 각 Task의 Commit step에 들어 있는 trailer는 계획 작성 세션 기준이므로, 실행 세션의 attribution 안내가 다르면 그 안내를 따른다
 - 테스트가 실패하면 코드 블록과 파일이 같은지부터 확인한다 (`diff`)
 
 ## 파일 구조
@@ -531,6 +531,9 @@ test_normalizes_remote_url() {
   assert_equals "git@github.com:acme/app" "$(normalize_remote_url "git@github.com:acme/app.git")" ".git 제거"
   assert_equals "https://github.com/acme/app" "$(normalize_remote_url "https://github.com/acme/app/")" "끝 / 제거"
   assert_equals "https://github.com/acme/app" "$(normalize_remote_url "https://github.com/acme/app.git/")" ".git/ 제거"
+  assert_equals "https://github.com/acme/app" "$(normalize_remote_url "https://user:secret-token@github.com/acme/app.git")" "URL의 인증 정보 제거"
+  assert_equals "ssh://github.com/acme/app" "$(normalize_remote_url "ssh://git@github.com/acme/app.git")" "ssh URL의 사용자 제거"
+  assert_equals "https://github.com/acme/app@v1" "$(normalize_remote_url "https://github.com/acme/app@v1")" "경로의 @ 는 유지"
 }
 
 test_lists_normalized_remotes() {
@@ -606,11 +609,22 @@ finish_tests
 # 대상 디렉터리와 프로필 매칭 조건 비교
 # bash 3.2 호환
 
-# remote URL 끝의 / 와 .git 을 떼어 비교할 수 있는 형태로 만듦
+# remote URL을 비교할 수 있는 형태로 만듦
+#   끝의 / 와 .git 제거
+#   https://user:token@host 형식의 인증 정보 제거 (가이드와 세션 컨텍스트에 토큰이 들어가지 않게)
 normalize_remote_url() {
-  local url="$1"
+  local url="$1" scheme address host_part path_part
   url="${url%/}"
   url="${url%.git}"
+  case "$url" in
+    *://*)
+      scheme="${url%%://*}"
+      address="${url#*://}"
+      host_part="${address%%/*}"
+      path_part="${address#"$host_part"}"
+      url="$scheme://${host_part##*@}$path_part"
+      ;;
+  esac
   printf '%s\n' "$url"
 }
 
@@ -722,13 +736,18 @@ test_extracts_only_id_sections() {
     '```markdown' \
     "## [inside-code] 코드 블록 안" \
     '```' \
-    "둘째 본문"
+    "둘째 본문" \
+    "- 목록 안의 예시" \
+    '   ```markdown' \
+    "## [inside-indented-code] 들여쓴 코드 블록 안" \
+    '   ```'
   extract_rule_sections "$TEST_TMP/rules.md" "$TEST_TMP/layer"
   assert_equals "first-rule
 second-rule" "$(cat "$TEST_TMP/layer/ids")" "id 섹션만 등장 순서대로"
   assert_equals "첫 규칙" "$(cat "$TEST_TMP/layer/first-rule.title")" "제목 추출"
   assert_equals "첫 본문" "$(cat "$TEST_TMP/layer/first-rule.body")" "본문 추출"
   assert_contains "$(cat "$TEST_TMP/layer/second-rule.body")" "## [inside-code] 코드 블록 안" "코드 블록 안 헤딩은 본문으로 유지"
+  assert_contains "$(cat "$TEST_TMP/layer/second-rule.body")" "## [inside-indented-code] 들여쓴 코드 블록 안" "들여쓴 코드 블록 안 헤딩도 본문으로 유지"
 }
 
 test_merges_layers_in_place() {
@@ -788,7 +807,7 @@ extract_rule_sections() {
   awk -v output_dir="$output_dir" '
     NR == 1 && $0 == "---" { in_frontmatter = 1; next }
     in_frontmatter { if ($0 == "---") in_frontmatter = 0; next }
-    /^```/ { in_code_block = !in_code_block }
+    /^[[:space:]]*```/ { in_code_block = !in_code_block }
     !in_code_block && /^## / {
       if (body_file != "") close(body_file)
       body_file = ""
@@ -1706,15 +1725,20 @@ resolve_target_dir() {
 }
 
 # JSON 문자열 값으로 쓸 수 있게 이스케이프. 탭, 줄바꿈, CR 이외의 제어문자는 제거
+# bash 3.2의 ${var//a/b} 치환은 입력이 길수록 급격히 느려져(20KB에 약 2초) awk로 처리
+# 백슬래시는 "&&"(매칭 텍스트 반복)로 두 배로 만들어 awk 구현마다 다른 치환 문자열 해석을 피함
 escape_for_json() {
-  local text
-  text="$(printf '%s' "$1" | LC_ALL=C tr -d '\001-\010\013\014\016-\037')"
-  text="${text//\\/\\\\}"
-  text="${text//\"/\\\"}"
-  text="${text//$'\n'/\\n}"
-  text="${text//$'\r'/\\r}"
-  text="${text//$'\t'/\\t}"
-  printf '%s' "$text"
+  printf '%s' "$1" | LC_ALL=C tr -d '\001-\010\013\014\016-\037' | awk '
+    BEGIN { ORS = "" }
+    {
+      gsub(/\\/, "&&")
+      gsub(/"/, "\\\"")
+      gsub(/\t/, "\\t")
+      gsub(/\r/, "\\r")
+      if (NR > 1) printf "\\n"
+      printf "%s", $0
+    }
+  '
 }
 
 main() {
@@ -2601,8 +2625,8 @@ CG=plugins/brownfield-navigator/bin/compose-guide
 for d in ~/repositories/fez-front-taap ~/repositories/omar-front-ctrl-room ~/repositories/front-space-petco ~/repositories/fez-front-ctrl-central ~/repositories/fez-front-court ~/repositories/front-taap-stpm ~/repositories/coffee-order ~/personal/tagatigi ~/repositories ~/repositories/fez-front-taap/src; do
   out="$(bash "$CG" "$d")"
   printf '%s | %s | %s | 경고 %s\n' "$(basename "$d")" \
-    "$(printf '%s\n' "$out" | grep -m1 '^- 조직' || echo '주입 없음')" \
-    "$(printf '%s\n' "$out" | grep -m1 '^- 프로젝트 파일' || echo '-')" \
+    "$(printf '%s\n' "$out" | grep -m1 '^- 조직' || printf '%s\n' '주입 없음')" \
+    "$(printf '%s\n' "$out" | grep -m1 '^- 프로젝트 파일' || printf '%s\n' '-')" \
     "$(printf '%s\n' "$out" | grep -c '^## brownfield-navigator 경고')"
 done
 ```
