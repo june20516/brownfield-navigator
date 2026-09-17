@@ -402,12 +402,13 @@ test_accepts_empty_list_comments_and_spaced_keys() {
     "" \
     "apply : off" \
     "match-remotes: []" \
-    "match-paths :" \
+    "match-paths :  # 경로 목록" \
     '  - "~/work/*"' \
+    "  - # 나중에 추가" \
     "---"
   write_lines "$TEST_TMP/quoted-apply.md" "---" "apply: 'suggest'" "---"
   assert_equals "apply=off
-path=~/work/*" "$(parse_profile_frontmatter "$TEST_TMP/profile.md")" "빈 리스트, 주석 줄, 콜론 앞 공백 처리"
+path=~/work/*" "$(parse_profile_frontmatter "$TEST_TMP/profile.md")" "빈 리스트, 주석 줄, 키 뒤 주석, 주석만 있는 항목, 콜론 앞 공백 처리"
   assert_equals "apply=suggest" "$(parse_profile_frontmatter "$TEST_TMP/quoted-apply.md")" "따옴표로 감싼 apply 값"
 }
 
@@ -562,6 +563,7 @@ parse_profile_frontmatter() {
     }
     # 값을 읽음. 따옴표로 시작하면 닫는 따옴표까지가 값이고 그 뒤에는 주석만 올 수 있음. 아니면 " #" 뒤가 주석
     function read_value(text,    quote, closing_position, rest) {
+      if (text ~ /^[[:space:]]+#/) return ""
       text = trim(text)
       quote = substr(text, 1, 1)
       if (quote == "\"" || quote == squote) {
@@ -595,7 +597,7 @@ parse_profile_frontmatter() {
         if (list_key == "") fail("어느 키의 리스트 항목인지 알 수 없음: " trim($0))
         list_item_count++
         item = $0
-        sub(/^[[:space:]]*-[[:space:]]+/, "", item)
+        sub(/^[[:space:]]*-/, "", item)
         item = read_value(item)
         if (item != "") print list_output_name "=" item
         next
