@@ -225,6 +225,18 @@ test_warns_on_unreadable_profile_files() {
   assert_contains "$output" "## [acme-rule]" "읽을 수 있는 조직 프로필은 계속 병합"
 }
 
+test_invalid_utf8_in_profile_keeps_full_guide() {
+  write_lines "$TEST_TMP/profiles/orgs/acme/profile.md" \
+    "---" "match-remotes:" '  - "*acme/*"' "---" \
+    "## [first-rule] 첫 규칙" "잘못된 바이트 $(printf '\261\333') 포함" \
+    "## [second-rule] 둘째 규칙" "둘째 본문"
+  make_git_repo "$TEST_TMP/app" "git@github.com:acme/app.git"
+  local output
+  output="$(LC_ALL=en_US.UTF-8 run_compose_guide "$TEST_TMP/app")"
+  assert_contains "$output" "## [second-rule] 둘째 규칙 (조직: acme)" "잘못된 UTF-8 뒤의 규칙도 빠지지 않음"
+  assert_not_contains "$output" "towc" "awk 변환 오류가 없음"
+}
+
 test_unsupported_key_warning_with_guide() {
   write_org_profile acme "name: acme" "match-remotes:" '  - "*acme/*"'
   make_git_repo "$TEST_TMP/app" "git@github.com:acme/app.git"
@@ -274,6 +286,7 @@ run_test test_multiple_projects_use_last_apply_and_warn
 run_test test_manual_mode_merges_suggest_and_off
 run_test test_warnings_only_when_nothing_matches
 run_test test_warns_on_unreadable_profile_files
+run_test test_invalid_utf8_in_profile_keeps_full_guide
 run_test test_unsupported_key_warning_with_guide
 run_test test_two_auto_orgs_apply_first_only
 run_test test_lists_references

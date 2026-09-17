@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# SessionStart 훅: 세션을 시작한 디렉터리에 맞는 brownfield-navigator 가이드를 컨텍스트로 주입
+# SessionStart 훅: 훅 입력의 작업 디렉터리(cwd)에 맞는 brownfield-navigator 가이드를 컨텍스트로 주입
+# startup, clear, compact 때 실행되므로 그 시점의 작업 디렉터리 기준
 # 어떤 경우에도 세션을 막지 않음 (항상 exit 0)
 # bash 3.2 호환
 
@@ -29,8 +30,9 @@ resolve_target_dir() {
 # JSON 문자열 값으로 쓸 수 있게 이스케이프. 탭, 줄바꿈, CR 이외의 제어문자는 제거
 # bash 3.2의 ${var//a/b} 치환은 입력이 길수록 급격히 느려져(20KB에 약 2초) awk로 처리
 # 백슬래시는 "&&"(매칭 텍스트 반복)로 두 배로 만들어 awk 구현마다 다른 치환 문자열 해석을 피함
+# awk는 LC_ALL=C 로 실행. UTF-8 로캘에서는 잘못된 바이트를 만나면 멈춰 가이드 뒷부분이 빠짐
 escape_for_json() {
-  printf '%s' "$1" | LC_ALL=C tr -d '\001-\010\013\014\016-\037' | awk '
+  printf '%s' "$1" | LC_ALL=C tr -d '\001-\010\013\014\016-\037' | LC_ALL=C awk '
     BEGIN { ORS = "" }
     {
       gsub(/\\/, "&&")

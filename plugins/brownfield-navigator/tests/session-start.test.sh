@@ -7,11 +7,12 @@ run_session_start() {
 }
 
 # 훅 출력 JSON을 파싱해 additionalContext 값을 출력. JSON이 올바르지 않으면 INVALID_JSON 출력
+# Claude Code처럼 잘못된 UTF-8 바이트는 대체 문자로 읽음
 read_additional_context() {
   python3 -c '
 import json, sys
 try:
-    data = json.load(sys.stdin)
+    data = json.loads(sys.stdin.buffer.read().decode("utf-8", "replace"))
     sys.stdout.write(data["hookSpecificOutput"]["additionalContext"])
 except Exception as error:
     sys.stdout.write("INVALID_JSON: %s" % error)
@@ -35,6 +36,16 @@ test_outputs_valid_json_with_special_characters() {
   assert_contains "$context" "# brownfield-navigator 가이드" "가이드가 additionalContext에 들어감"
   assert_contains "$context" "$(printf '따옴표 "q" 백슬래시 \\ 탭\t끝')" "따옴표, 백슬래시, 탭 보존"
   assert_contains "$context" "폼피드와 제어문자 제거" "그 밖의 제어문자는 제거"
+}
+
+test_keeps_guide_after_invalid_utf8() {
+  write_acme_profile \
+    "## [first-rule] 첫 규칙" "잘못된 바이트 $(printf '\261\333') 포함" \
+    "## [second-rule] 둘째 규칙" "둘째 본문"
+  make_git_repo "$TEST_TMP/app" "git@github.com:acme/app.git"
+  local context
+  context="$(LC_ALL=en_US.UTF-8 run_session_start "{\"cwd\":\"$TEST_TMP/app\"}" | read_additional_context)"
+  assert_contains "$context" "## [second-rule] 둘째 규칙 (조직: acme)" "잘못된 UTF-8 뒤의 규칙도 JSON에 들어감"
 }
 
 test_outputs_nothing_without_match() {
@@ -61,6 +72,7 @@ test_prefers_cwd_over_project_dir_env() {
 }
 
 run_test test_outputs_valid_json_with_special_characters
+run_test test_keeps_guide_after_invalid_utf8
 run_test test_outputs_nothing_without_match
 run_test test_falls_back_to_project_dir_env
 run_test test_prefers_cwd_over_project_dir_env
