@@ -395,11 +395,13 @@ test_accepts_empty_list_and_comment_lines() {
     "---" \
     "# 매칭 조건" \
     "" \
+    "apply : off" \
     "match-remotes: []" \
-    "match-paths:" \
+    "match-paths :" \
     '  - "~/work/*"' \
     "---"
-  assert_equals "path=~/work/*" "$(parse_profile_frontmatter "$TEST_TMP/profile.md")" "빈 리스트와 주석 줄 처리"
+  assert_equals "apply=off
+path=~/work/*" "$(parse_profile_frontmatter "$TEST_TMP/profile.md")" "빈 리스트, 주석 줄, 콜론 앞 공백 처리"
 }
 
 test_fails_without_frontmatter() {
@@ -557,7 +559,7 @@ parse_profile_frontmatter() {
       }
       # 들여쓰지 않았고 - 나 # 로 시작하지 않는 "이름:" 줄을 키로 봄 (한글, 점, 따옴표가 들어간 키도 경고 대상)
       if (match($0, /^[^[:space:]#-][^:]*:/)) {
-        key = substr($0, 1, RLENGTH - 1)
+        key = trim(substr($0, 1, RLENGTH - 1))
         value = trim(strip_comment(substr($0, RLENGTH + 1)))
         close_list()
         ignoring_unsupported_key = 0
