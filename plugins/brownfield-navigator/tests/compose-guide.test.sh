@@ -57,6 +57,65 @@ test_merges_core_and_org_on_ssh_remote() {
   assert_not_contains "$output" "## 호출되었을 때" "코어의 id 없는 섹션은 제외"
 }
 
+test_core_sections_are_summarized() {
+  write_lines "$TEST_TMP/profiles/orgs/acme/profile.md" \
+    "---" "match-remotes:" '  - "*acme/*"' "---" \
+    "## [acme-rule] 조직 규칙" "조직 규칙 문단" "" "**Why:** 조직 규칙의 이유"
+  make_git_repo "$TEST_TMP/app" "git@github.com:acme/app.git"
+  local output
+  output="$(run_compose_guide "$TEST_TMP/app")"
+  assert_contains "$output" "## [guide-stance] 가이드를 대하는 태도 (코어)
+이 가이드는 기존 흐름을 이어가는 확장·유지보수 작업의 기본값이다." "코어 규칙은 첫 문단을 출력"
+  assert_not_contains "$output" "**Why:** 컨벤션을 따르고 싶은 사용자를 돕는 도구이지" "코어 규칙의 Why는 빠짐"
+  assert_contains "$output" "$PLUGIN_ROOT/skills/brownfield-navigator/SKILL.md 의 같은 id 섹션" "머리말에 코어 전문 위치 안내"
+  assert_contains "$output" "**Why:** 조직 규칙의 이유" "조직 규칙은 전문"
+  assert_not_contains "$output" "> 이 가이드는" "예산 안이면 길이 안내 없음"
+}
+
+test_notice_when_guide_exceeds_budget() {
+  local long_body
+  long_body="$(awk 'BEGIN { for (i = 0; i < 9000; i++) printf "가" }')"
+  write_lines "$TEST_TMP/profiles/orgs/acme/profile.md" \
+    "---" "match-remotes:" '  - "*acme/*"' "---" \
+    "## [long-rule] 긴 규칙" "$long_body"
+  make_git_repo "$TEST_TMP/app" "git@github.com:acme/app.git"
+  local output
+  output="$(run_compose_guide "$TEST_TMP/app")"
+  assert_contains "$output" "# brownfield-navigator 가이드
+
+> 이 가이드는" "예산을 넘으면 제목 바로 아래에 안내"
+  assert_contains "$output" "그 파일을 Read해 전체를 읽고 따른다" "안내에 전체를 읽으라는 지시"
+  assert_order "$output" "> 이 가이드는" "- 조직: acme" "안내는 머리말보다 앞"
+  assert_contains "$output" "## [long-rule] 긴 규칙 (조직: acme)" "가이드 본문은 그대로 출력"
+
+  local medium_body
+  medium_body="$(awk 'BEGIN { for (i = 0; i < 4000; i++) printf "가" }')"
+  write_lines "$TEST_TMP/profiles/orgs/beta/profile.md" \
+    "---" "match-remotes:" '  - "*beta/*"' "---" \
+    "## [medium-rule] 중간 규칙" "$medium_body"
+  make_git_repo "$TEST_TMP/beta-app" "git@github.com:beta/app.git"
+  assert_not_contains "$(run_compose_guide "$TEST_TMP/beta-app")" "> 이 가이드는" "바이트가 아니라 문자 수로 셈 (한글 4,000자 규칙은 예산 안)"
+}
+
+test_project_matching_and_layer_precedence() {
+  write_org_profile acme "match-remotes:" '  - "*acme/*"'
+  write_lines "$TEST_TMP/profiles/personal.md" \
+    "## [acme-rule] 개인이 바꾼 규칙" "개인 본문" \
+    "## [shared] 개인 공유 규칙" "개인 공유 본문"
+  write_project_file acme app "match-remotes:" '  - "*acme/app"' -- "## [shared] 앱 공유 규칙" "앱 공유 본문"
+  write_project_file acme other "match-remotes:" '  - "*acme/other"' -- "## [shared] 다른 공유 규칙" "다른 공유 본문" "## [other-only] 다른 레포 전용" "다른 본문"
+  make_git_repo "$TEST_TMP/app" "git@github.com:acme/app.git"
+  local output
+  output="$(run_compose_guide "$TEST_TMP/app")"
+  assert_contains "$output" "- 프로젝트 파일: app
+" "매칭된 프로젝트 파일만 표시"
+  assert_contains "$output" "## [shared] 앱 공유 규칙 (프로젝트: app)" "프로젝트가 개인보다 우선"
+  assert_contains "$output" "## [acme-rule] 개인이 바꾼 규칙 (개인)" "개인이 조직보다 우선"
+  assert_not_contains "$output" "other-only" "매칭되지 않은 프로젝트 규칙은 빠짐"
+  assert_not_contains "$output" "다른 공유 본문" "매칭되지 않은 프로젝트의 같은 id도 빠짐"
+  assert_not_contains "$output" "## brownfield-navigator 경고" "매칭되지 않은 프로젝트는 경고 없음"
+}
+
 test_matches_https_remote_with_trailing_slash() {
   write_org_profile acme "match-remotes:" '  - "*acme/app"'
   make_git_repo "$TEST_TMP/app" "https://github.com/acme/app.git/"
@@ -201,6 +260,9 @@ test_lists_references() {
 run_test test_empty_without_profile_home
 run_test test_empty_when_nothing_matches
 run_test test_merges_core_and_org_on_ssh_remote
+run_test test_core_sections_are_summarized
+run_test test_notice_when_guide_exceeds_budget
+run_test test_project_matching_and_layer_precedence
 run_test test_matches_https_remote_with_trailing_slash
 run_test test_matches_path_without_git_from_subdirectory
 run_test test_project_replaces_core_section_in_place

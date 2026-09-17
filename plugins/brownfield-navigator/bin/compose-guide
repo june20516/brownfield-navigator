@@ -14,6 +14,8 @@ PLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 CORE_SKILL_FILE="$PLUGIN_ROOT/skills/brownfield-navigator/SKILL.md"
 PROFILE_HOME="${BROWNFIELD_NAVIGATOR_HOME:-$HOME/.claude/brownfield-navigator}"
 SKILL_COMMAND="/brownfield-navigator:brownfield-navigator"
+# 훅 출력은 10,000자를 넘으면 앞부분 미리보기만 전달되므로 여유를 두고 잡은 예산
+GUIDE_CHARACTER_BUDGET=9000
 
 . "$PLUGIN_ROOT/lib/profile.sh"
 . "$PLUGIN_ROOT/lib/match.sh"
@@ -113,6 +115,7 @@ print_header() {
   printf '\n'
   printf '%s\n\n' "기존 코드의 흐름과 조직 컨벤션을 따르는 작업을 위한 기본 가이드다. 사용자가 다른 방식을 원하면 그쪽을 따르고, 가이드와 어긋나는 지점만 한 번 짧게 알린다."
   printf '%s\n\n' "우선순위: 현재 사용자 지시 > CLAUDE.md > 프로젝트(프로젝트 파일, 프로젝트 메모리) > 개인 > 조직 > 코어. 같은 id의 규칙은 아래에 이미 이 순서로 병합되어 있다."
+  printf '%s\n\n' "(코어) 규칙은 핵심 문단만 담았다. 세부 기준과 이유는 $CORE_SKILL_FILE 의 같은 id 섹션에 있으니 해당 상황에서 필요하면 읽는다."
 }
 
 print_suggestions() {
@@ -138,7 +141,7 @@ print_rule_sections() {
     extract_rule_sections "$project_file" "$WORK_DIR/layer-project"
     merge_rule_layer "$WORK_DIR/layer-project" "프로젝트: $(basename "$project_file" .md)" "$merged_dir"
   done < "$WORK_DIR/projects-$org_name"
-  print_merged_sections "$merged_dir"
+  print_merged_sections "$merged_dir" "코어"
 }
 
 print_references() {
@@ -159,6 +162,24 @@ print_references() {
   if [ "$has_reference" = 1 ]; then
     printf '\n'
   fi
+}
+
+# UTF-8 문자 수. 이어지는 바이트(0x80~0xBF)를 빼고 세므로 로캘과 무관
+count_characters() {
+  LC_ALL=C tr -d '\200-\277' < "$1" | wc -c | tr -d ' '
+}
+
+# 예산을 넘으면 첫 줄 제목 바로 아래에 전체를 읽으라는 안내를 넣어 출력. 안내가 미리보기 안에 들어가야 함
+print_with_budget_notice() {
+  local output_file="$1" character_count
+  character_count="$(count_characters "$output_file")"
+  if [ "$character_count" -le "$GUIDE_CHARACTER_BUDGET" ]; then
+    cat "$output_file"
+    return 0
+  fi
+  sed -n '1p' "$output_file"
+  printf '\n> 이 가이드는 %s자로 훅 출력 한도에 가깝다. 앞부분만 보이고 저장된 파일 경로가 함께 표시되어 있으면, 그 파일을 Read해 전체를 읽고 따른다.\n' "$character_count"
+  sed -n '2,$p' "$output_file"
 }
 
 print_warnings() {
@@ -199,21 +220,24 @@ main() {
     add_warning "여러 조직이 매칭됨: $(cut -f1 "$WORK_DIR/auto-orgs" | join_lines /dev/stdin). $selected_org 만 적용함. 매칭 조건을 좁힐 것"
   fi
 
-  if [ -n "$selected_org" ]; then
-    print_header "$selected_org" "$selected_reason"
-  elif [ -s "$WORK_DIR/suggest-orgs" ]; then
-    printf '# brownfield-navigator 안내\n\n'
-  fi
-  if [ -s "$WORK_DIR/suggest-orgs" ]; then
-    print_suggestions
-  fi
-  if [ -n "$selected_org" ]; then
-    print_rule_sections "$selected_org"
-    print_references "$selected_org"
-  fi
-  if [ -s "$WORK_DIR/warnings" ]; then
-    print_warnings
-  fi
+  {
+    if [ -n "$selected_org" ]; then
+      print_header "$selected_org" "$selected_reason"
+    elif [ -s "$WORK_DIR/suggest-orgs" ]; then
+      printf '# brownfield-navigator 안내\n\n'
+    fi
+    if [ -s "$WORK_DIR/suggest-orgs" ]; then
+      print_suggestions
+    fi
+    if [ -n "$selected_org" ]; then
+      print_rule_sections "$selected_org"
+      print_references "$selected_org"
+    fi
+    if [ -s "$WORK_DIR/warnings" ]; then
+      print_warnings
+    fi
+  } > "$WORK_DIR/output"
+  print_with_budget_notice "$WORK_DIR/output"
 }
 
 main "$@"

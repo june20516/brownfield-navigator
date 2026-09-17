@@ -54,8 +54,9 @@ merge_rule_layer() {
 }
 
 # 병합 결과를 병합 순서대로 출력. 헤딩 끝에 최종 출처를 붙임
+# summary_source 를 주면 최종 출처가 그 값인 섹션은 본문의 첫 문단만 출력
 print_merged_sections() {
-  local merged_dir="$1" section_id title source_label
+  local merged_dir="$1" summary_source="${2:-}" section_id title source_label
   [ -f "$merged_dir/order" ] || return 0
   while IFS= read -r section_id; do
     title="$(cat "$merged_dir/$section_id.title")"
@@ -65,9 +66,21 @@ print_merged_sections() {
     else
       printf '## [%s] (%s)\n' "$section_id" "$source_label"
     fi
-    print_without_trailing_blank_lines "$merged_dir/$section_id.body"
+    if [ -n "$summary_source" ] && [ "$source_label" = "$summary_source" ]; then
+      print_first_paragraph "$merged_dir/$section_id.body"
+    else
+      print_without_trailing_blank_lines "$merged_dir/$section_id.body"
+    fi
     printf '\n'
   done < "$merged_dir/order"
+}
+
+# 앞쪽 빈 줄을 건너뛰고 첫 문단(다음 빈 줄 전까지)만 출력
+print_first_paragraph() {
+  awk '
+    /^[[:space:]]*$/ { if (started) exit; next }
+    { started = 1; print }
+  ' "$1"
 }
 
 print_without_trailing_blank_lines() {
