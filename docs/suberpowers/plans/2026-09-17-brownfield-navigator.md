@@ -17,7 +17,7 @@
 - 모든 명령은 레포 루트 `~/personal/brownfield-navigator`에서 실행한다
 - 스크립트와 테스트는 bash 3.2에서 동작해야 한다. 연관 배열(`declare -A`), `mapfile`, `${var,,}`를 쓰지 않고, 픽스처는 heredoc 대신 `printf`로 만든다
 - macOS의 `bash`는 `/bin/bash` 3.2다. 테스트는 `bash plugins/brownfield-navigator/tests/<이름>.test.sh`, 전체는 `bash plugins/brownfield-navigator/tests/run-all.sh`로 실행한다
-- 파일 내용은 이 계획의 코드 블록과 **정확히 같게** 쓴다. 모든 코드 블록은 스크래치 시제품에서 bash 3.2로 전체 테스트(45개)와 `claude plugin validate` 통과를 확인한 내용이다
+- 파일 내용은 이 계획의 코드 블록과 **정확히 같게** 쓴다. 모든 코드 블록은 스크래치 시제품에서 bash 3.2로 전체 테스트(46개)와 `claude plugin validate` 통과를 확인한 내용이다
 - 이 레포는 개인 레포이므로 커밋 메시지는 `type: 한국어 설명` 형식에 attribution trailer 두 줄을 붙인다. 각 Task의 Commit step에 들어 있는 trailer는 계획 작성 세션 기준이므로, 실행 세션의 attribution 안내가 다르면 그 안내를 따른다
 - 테스트가 실패하면 코드 블록과 파일이 같은지부터 확인한다 (`diff`)
 
@@ -1472,6 +1472,19 @@ test_warnings_only_when_nothing_matches() {
   assert_not_contains "$output" "# brownfield-navigator 가이드" "매칭이 없으면 가이드 없음"
 }
 
+test_warns_on_unreadable_profile_files() {
+  mkdir -p "$TEST_TMP/profiles/orgs/folder/profile.md"
+  write_org_profile acme "match-remotes:" '  - "*acme/*"'
+  mkdir -p "$TEST_TMP/profiles/orgs/acme/projects"
+  ln -s "$TEST_TMP/missing-target.md" "$TEST_TMP/profiles/orgs/acme/projects/linked.md"
+  make_git_repo "$TEST_TMP/app" "git@github.com:acme/app.git"
+  local output
+  output="$(run_compose_guide "$TEST_TMP/app")"
+  assert_contains "$output" "건너뜀 $TEST_TMP/profiles/orgs/folder/profile.md: 파일을 읽을 수 없음" "디렉터리인 조직 프로필은 경고"
+  assert_contains "$output" "건너뜀 $TEST_TMP/profiles/orgs/acme/projects/linked.md: 파일을 읽을 수 없음" "깨진 링크인 프로젝트 파일은 경고"
+  assert_contains "$output" "## [acme-rule]" "읽을 수 있는 조직 프로필은 계속 병합"
+}
+
 test_unsupported_key_warning_with_guide() {
   write_org_profile acme "name: acme" "match-remotes:" '  - "*acme/*"'
   make_git_repo "$TEST_TMP/app" "git@github.com:acme/app.git"
@@ -1517,6 +1530,7 @@ run_test test_project_apply_overrides_org_apply
 run_test test_multiple_projects_use_last_apply_and_warn
 run_test test_manual_mode_merges_suggest_and_off
 run_test test_warnings_only_when_nothing_matches
+run_test test_warns_on_unreadable_profile_files
 run_test test_unsupported_key_warning_with_guide
 run_test test_two_auto_orgs_apply_first_only
 run_test test_lists_references
@@ -1526,7 +1540,7 @@ finish_tests
 - [ ] **Step 2: 테스트를 실행해 실패 확인**
 
 실행: `bash plugins/brownfield-navigator/tests/compose-guide.test.sh; echo "exit=$?"`
-기대: `bin/compose-guide: No such file or directory`, 마지막 줄 `compose-guide.test.sh: 15개 중 15개 실패`, `exit=1`
+기대: `bin/compose-guide: No such file or directory`, 마지막 줄 `compose-guide.test.sh: 16개 중 16개 실패`, `exit=1`
 
 - [ ] **Step 3: 구현 작성**
 
@@ -1599,7 +1613,8 @@ evaluate_org() {
   : > "$matched_projects_file"
   project_apply=""
   for project_file in "$org_dir"/projects/*.md; do
-    [ -f "$project_file" ] || continue
+    # glob 에 걸린 것이 없을 때만 건너뜀. 디렉터리나 깨진 링크는 파싱 단계에서 경고로 드러남
+    [ -e "$project_file" ] || [ -L "$project_file" ] || continue
     project_name="$(basename "$project_file" .md)"
     project_parsed="$WORK_DIR/project-$org_name-$project_name.parsed"
     parse_or_warn "$project_file" "$project_parsed" || continue
@@ -1721,7 +1736,7 @@ main() {
   list_remote_urls "$TARGET_DIR" > "$WORK_DIR/remotes"
 
   for org_profile in "$PROFILE_HOME"/orgs/*/profile.md; do
-    [ -f "$org_profile" ] || continue
+    [ -e "$org_profile" ] || [ -L "$org_profile" ] || continue
     evaluate_org "$org_profile" "$manual_mode"
   done
 
@@ -1757,12 +1772,12 @@ exit 0
 - [ ] **Step 4: 실행 권한 부여 후 테스트를 실행해 통과 확인**
 
 실행: `chmod +x plugins/brownfield-navigator/bin/compose-guide && bash plugins/brownfield-navigator/tests/compose-guide.test.sh; echo "exit=$?"`
-기대: `compose-guide.test.sh: 15개 중 0개 실패`, `exit=0`
+기대: `compose-guide.test.sh: 16개 중 0개 실패`, `exit=0`
 
 - [ ] **Step 5: 전체 테스트 확인**
 
 실행: `bash plugins/brownfield-navigator/tests/run-all.sh; echo "exit=$?"`
-기대: compose-guide 15개, match 8개, profile 14개, sections 3개 모두 `0개 실패`, 마지막 줄 `테스트 파일 4개 모두 통과`, `exit=0`
+기대: compose-guide 16개, match 8개, profile 14개, sections 3개 모두 `0개 실패`, 마지막 줄 `테스트 파일 4개 모두 통과`, `exit=0`
 
 - [ ] **Step 6: Commit**
 
