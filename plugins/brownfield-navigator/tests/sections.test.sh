@@ -59,7 +59,7 @@ test_prints_heading_without_title() {
 }
 
 test_prints_first_paragraph_for_summary_source() {
-  write_lines "$TEST_TMP/core.md" "## [alpha] 코어 알파" "" "코어 요약 문단" "" "- 코어 세부 목록" "" "**Why:** 코어 이유"
+  write_lines "$TEST_TMP/core.md" "## [alpha] 코어 알파" "" "코어 요약 문단" "요약 둘째 줄" "" "- 코어 세부 목록" "" "**Why:** 코어 이유"
   write_lines "$TEST_TMP/org.md" "## [beta] 조직 베타" "조직 요약 문단" "" "**Why:** 조직 이유"
   extract_rule_sections "$TEST_TMP/core.md" "$TEST_TMP/core"
   extract_rule_sections "$TEST_TMP/org.md" "$TEST_TMP/org"
@@ -69,7 +69,8 @@ test_prints_first_paragraph_for_summary_source() {
   output="$(print_merged_sections "$TEST_TMP/merged" "코어")"
   assert_contains "$output" "## [alpha] 코어 알파 (코어)
 코어 요약 문단
-" "요약 대상 출처는 첫 문단만"
+요약 둘째 줄
+" "요약 대상 출처는 첫 문단 전체(여러 줄)"
   assert_not_contains "$output" "코어 세부 목록" "요약 대상의 나머지 본문은 빠짐"
   assert_not_contains "$output" "코어 이유" "요약 대상의 Why는 빠짐"
   assert_contains "$output" "**Why:** 조직 이유" "다른 출처는 본문 전체"

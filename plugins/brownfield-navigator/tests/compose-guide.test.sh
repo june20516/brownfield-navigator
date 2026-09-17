@@ -133,7 +133,7 @@ test_matches_path_without_git_from_subdirectory() {
 test_project_replaces_core_section_in_place() {
   write_org_profile acme "match-remotes:" '  - "*acme/*"'
   write_project_file acme app "match-remotes:" '  - "*acme/app"' -- \
-    "## [comment-density] 이 레포의 주석" "주석은 명사형으로 끝냄" \
+    "## [comment-density] 이 레포의 주석" "주석은 명사형으로 끝냄" "" "**Why:** 이 레포 주석 관례" \
     "## [app-only] 앱 전용 규칙" "앱 전용 본문"
   make_git_repo "$TEST_TMP/app" "git@github.com:acme/app.git"
   local output
@@ -142,6 +142,7 @@ test_project_replaces_core_section_in_place() {
   assert_contains "$output" "## [comment-density] 이 레포의 주석 (프로젝트: app)" "같은 id는 프로젝트 제목과 출처로 교체"
   assert_occurrence_count "$output" "## [comment-density]" 1 "교체된 id는 한 번만 출력"
   assert_not_contains "$output" "주석의 밀도와 어조는 주변 코드에 맞춘다" "교체된 코어 본문은 빠짐"
+  assert_contains "$output" "**Why:** 이 레포 주석 관례" "다른 층이 교체한 코어 id는 요약하지 않고 전문 출력"
   assert_order "$output" "## [comment-density]" "## [preserve-vs-decide]" "교체된 섹션은 코어 자리 유지"
   assert_order "$output" "## [acme-rule]" "## [app-only]" "프로젝트의 새 id는 끝에 추가"
 }
