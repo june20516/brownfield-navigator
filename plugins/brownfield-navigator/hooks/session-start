@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# SessionStart 훅: 세션을 시작한 디렉터리에 맞는 brownfield-navigator 가이드를 컨텍스트로 주입
+# 어떤 경우에도 세션을 막지 않음 (항상 exit 0)
+# bash 3.2 호환
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
+COMPOSE_GUIDE="$SCRIPT_DIR/../bin/compose-guide"
+
+# 훅 입력 JSON에서 cwd 값을 꺼냄. 경로 안의 JSON 이스케이프(\" 나 \u)는 지원하지 않음
+extract_cwd() {
+  local hook_input="$1"
+  local cwd_pattern='"cwd"[[:space:]]*:[[:space:]]*"([^"]*)"'
+  if [[ "$hook_input" =~ $cwd_pattern ]]; then
+    printf '%s\n' "${BASH_REMATCH[1]}"
+  fi
+}
+
+resolve_target_dir() {
+  local cwd_from_input="$1"
+  if [ -n "$cwd_from_input" ] && [ -d "$cwd_from_input" ]; then
+    printf '%s\n' "$cwd_from_input"
+  elif [ -n "${CLAUDE_PROJECT_DIR:-}" ] && [ -d "$CLAUDE_PROJECT_DIR" ]; then
+    printf '%s\n' "$CLAUDE_PROJECT_DIR"
+  else
+    pwd
+  fi
+}
+
+# JSON 문자열 값으로 쓸 수 있게 이스케이프. 탭, 줄바꿈, CR 이외의 제어문자는 제거
+# bash 3.2의 ${var//a/b} 치환은 입력이 길수록 급격히 느려져(20KB에 약 2초) awk로 처리
+# 백슬래시는 "&&"(매칭 텍스트 반복)로 두 배로 만들어 awk 구현마다 다른 치환 문자열 해석을 피함
+escape_for_json() {
+  printf '%s' "$1" | LC_ALL=C tr -d '\001-\010\013\014\016-\037' | awk '
+    BEGIN { ORS = "" }
+    {
+      gsub(/\\/, "&&")
+      gsub(/"/, "\\\"")
+      gsub(/\t/, "\\t")
+      gsub(/\r/, "\\r")
+      if (NR > 1) printf "\\n"
+      printf "%s", $0
+    }
+  '
+}
+
+main() {
+  local hook_input="" target_dir guide_text
+  if [ ! -t 0 ]; then
+    hook_input="$(cat)"
+  fi
+  target_dir="$(resolve_target_dir "$(extract_cwd "$hook_input")")"
+  guide_text="$(bash "$COMPOSE_GUIDE" "$target_dir" 2>/dev/null)"
+  [ -n "$guide_text" ] || return 0
+  printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "SessionStart",\n    "additionalContext": "%s"\n  }\n}\n' \
+    "$(escape_for_json "$guide_text")"
+}
+
+main
+exit 0
