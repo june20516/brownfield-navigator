@@ -1,7 +1,7 @@
 # Brownfield Navigator 설계
 
 - 작성일: 2026-09-17
-- 상태: 설계 승인, 구현 계획 작성 전
+- 상태: 설계 승인, spec 리뷰 반영, 구현 계획 작성 전
 
 ## 1. 목적
 
@@ -42,7 +42,7 @@
 
 - 같은 id의 규칙은 `compose-guide`가 기계적으로 병합한다. 뒤의 층이 앞의 층을 대체한다
 - 프로젝트 메모리와 프로필이 어긋나면 메모리를 따른다. 사용자가 더 최근에 한 말이기 때문
-- ③ 개인 프로필은 `apply: auto`인 조직 프로필이 하나 이상 매칭된 세션에만 적용한다
+- ③ 개인 프로필은 병합이 일어나는 경우(적용 값이 `auto`인 조직이 있을 때)에만 들어간다
 
 ## 3. 저장소 구성
 
@@ -60,7 +60,7 @@ brownfield-navigator/
     ├── bin/compose-guide                  # 매칭과 병합 (훅과 스킬이 함께 사용)
     ├── hooks/
     │   ├── hooks.json
-    │   ├── run-hook.cmd                   # suberpower 방식 재사용
+    │   ├── run-hook.cmd                   # suberpower 파일 그대로 복사
     │   └── session-start
     ├── skills/
     │   ├── brownfield-navigator/SKILL.md  # ① 코어 원칙 + 수동 호출 절차
@@ -102,7 +102,6 @@ brownfield-navigator/
 
 ```yaml
 ---
-name: pnpt
 apply: auto
 match-remotes:
   - "*pnpt-ds/*"
@@ -110,66 +109,90 @@ match-paths: []
 ---
 ```
 
-- 지원하는 키는 `name`, `apply`, `match-remotes`, `match-paths` 네 개
-- 리스트는 한 줄에 `  - "패턴"` 하나, 빈 리스트는 `[]`
-- `apply`: `auto` | `suggest` | `off`, 생략하면 `auto`
-- 패턴은 bash glob (`*`는 `/`도 매칭). `match-paths`의 앞머리 `~`는 홈 경로로 확장
-- remote 조건과 경로 조건 중 하나라도 맞으면 매칭
+- **이름:** 조직 이름은 `orgs/` 아래 디렉터리 이름이다. 출처 표기와 안내문에 이 이름을 쓴다. `name` 키는 두지 않는다
+- **지원 키:** `apply`, `match-remotes`, `match-paths`
+- **리스트:** 블록 형식만 지원한다. 한 줄에 `  - 패턴` 하나이며, 패턴을 큰따옴표로 감싸도 되고 감싸지 않아도 된다(감싸면 따옴표를 벗겨낸다). 빈 리스트는 `[]` 또는 키 생략. 한 줄 flow 형식(`["a", "b"]`)은 지원하지 않는다
+- **`apply`:** `auto` | `suggest` | `off`, 생략하면 `auto`
+- **패턴:** bash `[[ 문자열 == 패턴 ]]` 비교. 문자열 전체와 일치해야 하며 `*`는 `/`도 매칭한다. `match-paths` 패턴의 앞머리 `~`는 홈 경로로 확장한다
+- **remote 매칭:** 정규화한 remote URL(5장 1번) 중 하나가 패턴과 일치
+- **경로 매칭:** 대상 디렉터리 **또는 그 상위 디렉터리 중 하나**가 패턴과 일치. 따라서 `~/work/acme/proj`는 `proj` 하위에서 시작한 세션에도 맞고, `~/work/acme/*`는 `acme` 아래의 모든 레포에 맞는다
+- remote 조건과 경로 조건 중 하나라도 맞으면 매칭한다. 두 리스트가 모두 비어 있으면 매칭되지 않는다
 
 ### 4.3 프로젝트 파일 frontmatter
 
-조직 프로필과 같은 키를 쓴다. `apply`를 생략하면 조직 값을 따른다.
+조직 프로필과 같은 키와 규칙을 쓴다.
 
-remote URL은 끝의 `/`와 `.git`을 제거해 정규화한 뒤 비교하므로 `"*pnpt-ds/fez-front-taap"`처럼 정확히 쓸 수 있다.
+- 프로젝트 이름은 파일 이름에서 `.md`를 뗀 것이다
+- `apply`를 생략하면 조직 값을 따른다
+- remote URL은 정규화한 뒤 비교하므로 `*pnpt-ds/fez-front-taap`처럼 레포 이름까지 정확히 쓸 수 있다
 
 ### 4.4 개인 프로필
 
-frontmatter가 없다(있어도 무시한다). 본문은 규칙 섹션으로 구성한다.
+frontmatter를 파싱하지 않는다. 본문은 규칙 섹션으로 구성한다.
 
 ### 4.5 참고 파일
 
-frontmatter에 `description:` 한 줄을 둔다. 본문 형식은 자유. 주입 시에는 경로와 description만 목록으로 들어가고, Claude가 관련 작업을 할 때 Read한다.
+frontmatter에 `description:` 한 줄을 둔다. 본문 형식은 자유. 주입할 때는 경로와 description만 목록으로 들어가고, Claude가 관련 작업을 할 때 Read한다. description이 없으면 경로만 표시한다.
+
+### 4.6 파싱 실패 조건
+
+조직 프로필과 프로젝트 파일에만 적용한다. 실패한 파일은 매칭 대상에서 빠지고 경고 한 줄이 남는다.
+
+| 조건 | 처리 |
+|---|---|
+| 첫 줄이 `---`가 아님 (frontmatter 없음) | 실패 |
+| 닫는 `---`가 없음 | 실패 |
+| `apply` 값이 `auto`, `suggest`, `off` 밖 | 실패 |
+| 리스트 키 뒤가 `[]`도 아니고 블록 항목도 아님 (flow 형식 포함) | 실패 |
+| 지원하지 않는 키 | 실패 아님. 경고 후 무시 |
 
 ## 5. compose-guide
 
 ```
-compose-guide [대상 디렉터리]    # 생략하면 현재 디렉터리
+compose-guide [--manual] [대상 디렉터리]    # 대상을 생략하면 현재 디렉터리
 ```
 
-- 출력: 병합된 가이드 텍스트(stdout). 매칭이 없으면 빈 출력
-- 항상 exit 0
-- 의존성: bash, git(선택). jq는 쓰지 않음
+- **`--manual`:** 수동 호출용. 매칭된 조직과 프로젝트의 적용 값이 `suggest`나 `off`여도 `auto`로 취급한다. 사용자가 직접 요청했기 때문
+- **출력:** 가이드 텍스트(stdout). 출력할 것이 없으면 빈 출력
+- **종료 코드:** 항상 0
+- **구현 제약:**
+  - bash 3.2 호환 (macOS 기본 `/bin/bash`). 연관 배열(`declare -A`), `mapfile`, `${var,,}`를 쓰지 않는다
+  - awk, sed, grep은 쓸 수 있되 BSD와 GNU에 공통인 옵션만 쓴다
+  - jq는 쓰지 않는다. git은 있으면 쓴다
 
 ### 알고리즘
 
-1. 대상 디렉터리를 절대 경로로 바꾼다. git을 쓸 수 있으면 `git -C <dir> remote -v`의 URL을 모두 모아 끝의 `/`와 `.git`을 제거한다
-2. `orgs/*/profile.md`를 이름순으로 읽어 frontmatter를 파싱한다. 실패한 프로필은 경고 목록에 넣고 건너뛴다
-3. 조직 매칭: 정규화한 URL 중 하나가 `match-remotes` 패턴에 맞거나, 대상 경로가 `match-paths` 패턴에 맞으면 매칭
-4. 매칭된 조직마다 `projects/*.md`를 같은 방식으로 매칭한다. 여러 개가 매칭되면 이름순으로 모두 병합하고 경고를 붙인다
-5. `apply` 결정: 매칭된 프로젝트 파일에 `apply`가 있으면 그 값, 없으면 조직 값
-   - `off`: 그 조직은 출력하지 않음
-   - `suggest`: 한 줄 안내만 출력 (`<org> 가이드를 적용할 수 있음. /brownfield-navigator로 불러오기`)
-   - `auto`: 아래 7번의 병합 수행
-6. 매칭된 조직이 없을 때: 경고가 있으면 경고만 출력하고, 경고도 없으면 빈 출력
-7. 병합 순서: 코어 → 조직(이름순) → 개인 → 프로젝트(이름순)
-   - 같은 id는 **처음 등장한 자리에서** 내용을 대체하고, 새 id는 끝에 추가한다
-   - 헤딩 끝에 출처를 붙인다: `(코어)`, `(조직: pnpt)`, `(개인)`, `(프로젝트: fez-front-taap)`
-   - 대체된 섹션은 대체한 층의 제목과 본문을 쓰고, 최종 출처만 표시한다
-   - 서로 다른 조직이 같은 id를 정의하면 둘 다 남기고 충돌 경고를 붙인다
-8. 출력 구성
-   1. 머리말: 매칭 근거(조직 이름, 맞은 remote 또는 경로), 가이드 성격("기존 흐름을 따르는 작업을 위한 기본 가이드. 사용자가 다른 방식을 원하면 그쪽을 따름"), 우선순위 안내
-   2. 병합된 규칙 섹션
-   3. 참고 파일 목록: `- <절대 경로>: <description>`
-   4. 경고 (있을 때만)
+1. **대상 준비:** 대상 디렉터리를 절대 경로로 바꾼다. git을 쓸 수 있으면 `git -C <dir> remote -v`의 URL을 모두 모으고, 끝의 `/`와 `.git`을 제거해 정규화한다
+2. **조직 파싱:** `orgs/*/profile.md`를 이름순으로 읽는다. 파싱에 실패한 파일은 경고를 남기고 제외한다 (4.6)
+3. **조직 매칭:** 4.2 규칙으로 매칭한다
+4. **프로젝트 매칭:** 매칭된 조직마다 `projects/*.md`를 같은 방식으로 파싱하고 매칭한다. 2개 이상 매칭되면 이름순으로 모두 쓰고 경고를 붙인다
+5. **적용 값 결정:** 매칭된 프로젝트 파일 중 `apply`가 있는 파일의 값(여러 개면 이름순 마지막)을 쓰고, 없으면 조직 값을 쓴다. `--manual`이면 `auto`
+6. **조직 분류**
+   - `off`: 제외한다
+   - `suggest`: 안내문 목록에 넣는다. 안내문은 `<org> 가이드를 적용할 수 있음. /brownfield-navigator로 불러오기`
+   - `auto`: 병합 대상이다. `auto` 조직이 2개 이상이면 이름순 첫 조직만 병합하고 경고를 붙인다 (`여러 조직이 매칭됨: a, b. a만 적용함. 매칭 조건을 좁힐 것`)
+7. **병합** (병합 대상 조직이 있을 때만)
+   - 층 순서: 코어 → 조직 → 개인 → 프로젝트(이름순)
+   - 코어 층: `skills/brownfield-navigator/SKILL.md`에서 frontmatter와 id 없는 `## ` 섹션을 뺀 `## [id]` 섹션들
+   - 개인 층: `personal.md`가 있으면 그 파일의 `## [id]` 섹션들
+   - 같은 id는 처음 등장한 자리에서 교체한다. 제목과 본문은 교체한 층의 것을 쓴다. 새 id는 끝에 추가한다
+   - 헤딩 끝에 최종 출처를 붙인다: `(코어)`, `(조직: pnpt)`, `(개인)`, `(프로젝트: fez-front-taap)`
+8. **출력 구성** (해당하는 것만, 이 순서로)
+   1. 머리말 (병합이 있을 때): 매칭 근거(조직 이름, 맞은 remote 또는 경로), 가이드 성격("기존 흐름을 따르는 작업을 위한 기본 가이드. 사용자가 다른 방식을 원하면 그쪽을 따름"), 2장 우선순위 요약
+   2. suggest 안내문
+   3. 병합된 규칙 섹션
+   4. 참고 파일 목록 (병합한 조직의 `references/*.md`): `- <절대 경로>: <description>`
+   5. 경고
 
 ## 6. SessionStart 훅
 
-- `hooks.json`: `SessionStart`, matcher `startup|clear|compact`, `run-hook.cmd session-start` 호출
-- `session-start`
-  1. 대상 디렉터리: stdin JSON의 `cwd`를 jq 없이 추출. 실패하면 `CLAUDE_PROJECT_DIR`, 그것도 없으면 `pwd`
-  2. `compose-guide` 실행
-  3. 출력이 비어 있으면 아무것도 출력하지 않음
-  4. 출력이 있으면 `{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"..."}}` 출력 (JSON 이스케이프는 suberpower의 `escape_for_json` 방식)
+- **`hooks.json`:** `SessionStart`, matcher `startup|clear|compact`, `"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd" session-start` 호출
+- **`session-start`**
+  1. 대상 디렉터리: stdin JSON에서 bash 정규식 `"cwd"[[:space:]]*:[[:space:]]*"([^"]*)"`으로 `cwd`를 추출한다. 추출에 실패하거나 디렉터리가 없으면 `CLAUDE_PROJECT_DIR`, 그것도 없으면 `pwd`. 경로 안의 JSON 이스케이프(`\"`, `\u`)는 지원하지 않는다
+  2. `compose-guide`는 PATH가 아니라 스크립트 위치 기준(`<hooks 디렉터리>/../bin/compose-guide`)으로 실행한다. `--manual`은 붙이지 않는다
+  3. 출력이 비어 있으면 아무것도 출력하지 않는다
+  4. 출력이 있으면 `{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"..."}}`를 출력한다
+- **JSON 이스케이프:** `\`, `"`, 줄바꿈, `\r`, 탭은 이스케이프하고, 나머지 제어문자(U+0001~U+001F)는 제거한다
 - 어떤 오류도 세션을 막지 않는다 (exit 0)
 - 주입 문구에 `EXTREMELY_IMPORTANT`, `MUST` 같은 강제 표현을 쓰지 않는다
 - 출력 형식은 Claude Code만 지원한다
@@ -178,31 +201,34 @@ compose-guide [대상 디렉터리]    # 생략하면 현재 디렉터리
 
 ### 7.1 `brownfield-navigator` (코어)
 
-- frontmatter: 모델 호출 허용. description은 좁게 쓴다: "레거시 코드베이스에서 회사 컨벤션과 기존 흐름을 따르는 작업 가이드를 불러온다. 사용자가 가이드 적용을 요청하거나, 세션 시작 시 주입이 없었는데 등록된 조직의 레포를 작업할 때 사용"
-- 본문
-  - `## 이 스킬이 하는 일` (id 없음): 층 구조와 가이드 성격을 요약
+- **frontmatter:** 모델 호출을 허용한다. description은 좁게 쓴다: "레거시 코드베이스에서 회사 컨벤션과 기존 흐름을 따르는 작업 가이드를 불러온다. 사용자가 가이드 적용을 요청하거나, 세션 시작 때 가이드가 주입되지 않았는데 등록된 조직의 레포를 작업할 때 사용"
+- **본문**
+  - `## 이 스킬이 하는 일` (id 없음): 층 구조와 가이드 성격 요약
   - `## 호출되었을 때` (id 없음)
-    1. 세션 컨텍스트에 이미 brownfield-navigator 가이드가 주입되어 있으면 추가로 할 일 없이 작업을 계속한다
-    2. 주입이 없으면 작업 대상 경로를 정한다 (사용자가 말한 레포, 없으면 cwd)
-    3. 스킬 base directory 기준 `../../bin/compose-guide <경로>` 실행
-    4. 출력이 있으면 이 세션에 적용한다고 한 줄로 알리고 적용한다
-    5. 출력이 없으면 매칭되는 프로필이 없다고 알리고 두 가지를 제안한다: 이번 세션에 코어 원칙만 적용하기, `/harvest-profile`로 이 레포 등록하기
+    1. 세션 컨텍스트에 병합된 가이드가 이미 주입되어 있으면 추가로 할 일 없이 작업을 계속한다 (한 줄 suggest 안내만 있는 경우는 해당하지 않음)
+    2. 작업 대상 경로를 정한다 (사용자가 말한 레포, 없으면 cwd)
+    3. `"${CLAUDE_PLUGIN_ROOT}/bin/compose-guide" --manual <경로>`를 실행한다
+    4. 출력에 병합된 가이드가 있으면 이 세션에 적용한다고 한 줄로 알리고 적용한다
+    5. 없으면 매칭되는 프로필이 없다고 알리고(경고가 있으면 함께 전달) 두 가지를 제안한다: 이번 세션에 코어 원칙만 적용하기, `/harvest-profile`로 이 레포 등록하기
   - 코어 규칙 섹션 (8장)
 
 ### 7.2 `harvest-profile` (수집)
 
-- frontmatter: `disable-model-invocation: true` (파일을 쓰므로 사용자만 호출), `argument-hint: "[조직 이름 또는 메모리 경로]"`
-- 절차
-  1. **수집:** `~/.claude/projects/*/memory/*.md`(MEMORY.md 제외)를 모은다. 디렉터리 이름으로 원래 경로를 복원하고(실제로 존재하는지 확인), git remote를 조회해 조직 후보로 묶는다. 묶는 기준은 remote owner, git이 없으면 상위 경로
+- **frontmatter:** `disable-model-invocation: true` (파일을 쓰므로 사용자만 호출), `argument-hint: "[조직 이름 또는 메모리 경로]"`
+- **절차**
+  1. **수집:** `~/.claude/projects/*/memory/*.md`(MEMORY.md 제외)를 모은다
+     - 원래 경로는 같은 프로젝트 디렉터리의 `*.jsonl` 트랜스크립트에 있는 `"cwd"` 값으로 복원한다
+     - jsonl이 없으면 디렉터리 이름의 `-`를 `/`로 바꾼 후보 중 실제로 존재하는 경로를 쓰고, 후보가 여럿이거나 없으면 사용자에게 확인한다
+     - git remote를 조회해 조직 후보로 묶는다. 기준은 remote owner이고, git이 없으면 상위 경로다
   2. **범위 확인:** 조직 후보와 포함할 프로젝트를 사용자에게 확인받는다. 개인 프로젝트를 제외할지는 사용자가 정한다
   3. **분류:** 메모리 본문을 읽고 아래 표로 분류한다
   4. **충돌:** 서로 부딪히는 규칙은 나란히 보여주고, 정리안(적용 상황으로 구분하거나 조직 기본값과 프로젝트 대체로 분리)을 제시한다
-  5. **작성:** 층별 초안을 보여주고 승인을 받은 뒤 템플릿 형식으로 파일을 쓴다. 매칭 조건도 함께 제안한다 (git이 있으면 remote 패턴, 없으면 경로 glob)
+  5. **작성:** 층별 초안을 보여주고 승인을 받은 뒤 템플릿 형식(4장)으로 파일을 쓴다. 매칭 조건도 함께 제안한다 (git이 있으면 remote 패턴, 없으면 경로 패턴)
   6. **보고**
      - 생성하거나 수정한 파일
      - 레포별 `compose-guide` 미리보기
      - 정리 후보 메모리 목록 (프로필로 옮겨진 것, CLAUDE.md와 중복인 것). **삭제하지 않는다**
-- 분류 기준
+- **분류 기준**
 
 | 조건 | 분류 |
 |---|---|
@@ -212,9 +238,9 @@ compose-guide [대상 디렉터리]    # 생략하면 현재 디렉터리
 | 같은 주제인데 레포마다 다름 | ② 조직 기본값 + 프로젝트 대체 |
 | 한 레포에서만 나온 규칙 | 적용 범위를 사용자에게 질문. 넓히지 않으면 프로젝트 파일 |
 | 설정값, 함정, 문서 위치 등 사실 | ④ 메모리에 유지 |
-| 긴 참고 정보가 여러 레포에 걸침 | 조직 `references/` |
+| 여러 레포에 걸친 긴 참고 정보 | 조직 `references/` |
 
-- 재실행: 프로필이 이미 있으면 덮어쓰지 않고, 보완할 부분만 diff로 제안한다
+- **재실행:** 프로필이 이미 있으면 덮어쓰지 않고, 보완할 부분만 diff로 제안한다
 
 ## 8. ① 코어 규칙
 
@@ -239,11 +265,18 @@ compose-guide [대상 디렉터리]    # 생략하면 현재 디렉터리
 
 ## 9. 첫 사용자(bran) 프로필
 
-구현 시 이 내용으로 직접 작성하고, 이후 `harvest-profile` 재실행으로 누락 여부를 검증한다.
+구현 시 이 내용으로 직접 작성하고, 이후 `harvest-profile` 재실행으로 누락 여부를 검증한다. 파일의 frontmatter는 4.2 형식(블록 리스트)을 따른다.
 
 ### 9.1 ② `orgs/pnpt/profile.md`
 
-frontmatter: `apply: auto`, `match-remotes: ["*pnpt-ds/*"]`, `match-paths: []`
+```yaml
+---
+apply: auto
+match-remotes:
+  - "*pnpt-ds/*"
+match-paths: []
+---
+```
 
 | id | 내용 | 출처 메모리 |
 |---|---|---|
@@ -274,7 +307,9 @@ frontmatter: `apply: auto`, `match-remotes: ["*pnpt-ds/*"]`, `match-paths: []`
 
 ### 9.3 프로젝트 파일
 
-| 파일 | match-remotes | 섹션 |
+각 파일의 frontmatter는 `match-remotes` 블록 리스트에 아래 패턴 하나를 두고, `apply`와 `match-paths`는 생략한다.
+
+| 파일 | match-remotes 패턴 | 섹션 |
 |---|---|---|
 | `fez-front-ctrl-central.md` | `*pnpt-ds/fez-front-ctrl-central` | `[tests]` 테스트 파일을 만들지 않음. `tsc --noEmit`과 CRA 빌드로만 검증 |
 | `fez-front-taap.md` | `*pnpt-ds/fez-front-taap` | `[tests]` 테스트를 유지하지 않음. `npx tsc --noEmit`과 prettier로 검증, 동작은 기기에서 확인. `[workflow-docs]` 커밋하지 않고 구현이 끝나면 삭제 |
@@ -292,38 +327,61 @@ court, stpm은 달라지는 규칙이 없어 파일을 만들지 않는다.
 | 상황 | 동작 |
 |---|---|
 | 프로필 홈이 없음 | 빈 출력 |
-| 매칭되는 조직 없음 | 빈 출력 |
-| frontmatter 파싱 실패 | 그 파일을 건너뛰고 경고 한 줄 출력 (매칭 여부와 무관하게 출력해 고칠 수 있게 함) |
-| 조직 2개 이상 매칭 | 모두 병합. 서로 다른 조직이 같은 id를 정의하면 둘 다 남기고 충돌 경고 |
-| 프로젝트 파일 2개 이상 매칭 | 이름순으로 모두 병합하고 경고 |
+| 매칭되는 조직 없음, 경고 없음 | 빈 출력 |
+| 매칭되는 조직 없음, 경고 있음 | 경고만 출력 (매칭과 무관하게 설정을 고칠 수 있게 함) |
+| 파싱 실패 | 4.6 조건에 따라 그 파일 제외, 경고 한 줄 |
+| `auto` 조직 2개 이상 매칭 | 이름순 첫 조직만 병합, 경고 |
+| 프로젝트 파일 2개 이상 매칭 | 이름순으로 모두 병합, 경고. `apply`는 이름순 마지막 값 |
 | git 미설치, remote 없음, git 레포 아님 | remote 검사를 건너뛰고 경로 조건만 사용 |
+| 훅 입력에서 `cwd` 추출 실패 | `CLAUDE_PROJECT_DIR`, 그다음 `pwd` |
 | 훅 내부 오류 | 세션을 막지 않음 (exit 0, 빈 출력) |
 
 ## 11. 테스트
 
-- `tests/compose-guide.test.sh`: 외부 의존성 없는 bash 테스트. 임시 프로필 홈(`BROWNFIELD_NAVIGATOR_HOME`)과 임시 git 레포(`git init` + `git remote add`)를 만들어 검증
-  - 매칭 없음이면 빈 출력
+### 11.1 `tests/compose-guide.test.sh`
+
+외부 의존성이 없는 bash 테스트다. `/bin/bash`(3.2)로 실행한다. 임시 프로필 홈(`BROWNFIELD_NAVIGATOR_HOME`)과 임시 git 레포(`git init` + `git remote add`)를 만들어 아래를 검증한다.
+
+- **매칭**
+  - 매칭이 없으면 빈 출력
   - ssh와 https remote 매칭, `.git` 유무 정규화
   - git이 아닌 디렉터리에서 경로 매칭, `~` 확장
-  - 같은 id 대체 (위치 유지, 출처 표시)
+  - 경로 패턴이 대상의 상위 디렉터리에 맞는 경우(하위 디렉터리에서 시작)와 대상 자신에게 맞는 경우
+- **병합**
+  - 같은 id 대체 (위치 유지, 교체한 층의 제목, 최종 출처 표시)
   - 새 id 추가
-  - `apply: suggest`, `apply: off`, 프로젝트 apply가 조직 apply보다 우선
-  - 개인 프로필은 auto 조직이 매칭된 경우에만 병합
-  - 깨진 frontmatter는 경고하고 계속 진행
-  - 조직 2개 매칭 시 같은 id 충돌 경고
-  - 참고 파일 목록과 description
-- 훅: `session-start` 출력이 올바른 JSON인지 (`python3 -m json.tool`로 검증), 매칭이 없을 때 빈 출력인지
-- 실제 세션 확인
-  - `~/repositories/fez-front-taap`에서 시작하면 가이드가 주입되고 `[tests]`가 프로젝트 출처로 표시됨
-  - `~/personal/tagatigi`, `~/repositories/coffee-order`에서는 주입되지 않음
-  - `~/repositories`에서 시작한 뒤 `/brownfield-navigator`를 호출해 대상 레포를 지정하면 가이드가 적용됨
+  - 개인 프로필은 병합이 있을 때만 포함
+  - 참고 파일 목록과 description, description 없는 경우
+- **적용 값**
+  - `apply: suggest`는 안내문만, `apply: off`는 출력 없음
+  - 프로젝트 `apply`가 조직 `apply`보다 우선, 프로젝트 파일 여러 개면 이름순 마지막 값
+  - `--manual`이면 `suggest`와 `off`도 병합
+- **에러**
+  - 4.6의 실패 조건 각각이 경고를 남기고 계속 진행
+  - flow 형식 리스트는 실패 경고
+  - 지원하지 않는 키는 경고만
+  - 매칭 없음 + 경고 있음이면 경고만 출력
+  - `auto` 조직 2개 매칭이면 첫 조직만 병합 + 경고
+
+### 11.2 훅
+
+- `session-start` 출력이 올바른 JSON인지 `python3 -m json.tool`로 검증한다. 탭, 따옴표, 백슬래시, 그 밖의 제어문자(form feed 등)를 포함한 프로필로 확인한다
+- 매칭이 없을 때 빈 출력인지 확인한다
+- stdin에 `cwd`가 없을 때 `CLAUDE_PROJECT_DIR`로 대체하는지 확인한다
+
+### 11.3 실제 세션
+
+- `~/repositories/fez-front-taap`에서 시작하면 가이드가 주입되고 `[tests]`가 프로젝트 출처로 표시됨
+- `~/personal/tagatigi`, `~/repositories/coffee-order`에서는 주입되지 않음
+- `~/repositories`에서 시작한 뒤 `/brownfield-navigator`를 호출해 대상 레포를 지정하면 가이드가 적용됨
 - bran 프로필 작성 후 `/harvest-profile`을 재실행해 누락 제안 여부 확인
 
 ## 12. 설치와 배포
 
-1. 로컬 마켓플레이스로 설치해 검증 (`/plugin marketplace add ~/personal/brownfield-navigator`)
-2. GitHub 레포 생성과 push는 외부 공개 작업이므로 구현 완료 후 사용자 확인을 받고 진행
-3. README에 다른 사용자를 위한 설치, `/harvest-profile` 실행, 프로필 형식 설명을 포함
+1. 로컬 마켓플레이스로 설치해 검증한다 (`/plugin marketplace add ~/personal/brownfield-navigator`). 로컬 설치는 캐시로 복사하지 않고 제자리에서 로드하므로 `${CLAUDE_PLUGIN_ROOT}`가 레포 경로를 가리킨다
+2. GitHub 레포 생성과 push는 외부 공개 작업이므로 구현 완료 후 사용자 확인을 받고 진행한다
+3. GitHub 설치로 전환한 뒤에는 `${CLAUDE_PLUGIN_ROOT}`가 캐시 경로로 바뀌므로, 11.3 실제 세션 확인을 한 번 더 수행한다
+4. README에 다른 사용자를 위한 설치, `/harvest-profile` 실행, 프로필 형식 설명을 포함한다
 
 ## 13. 범위 밖
 
@@ -332,9 +390,8 @@ court, stpm은 달라지는 규칙이 없어 파일을 만들지 않는다.
 - SVN, Mercurial의 remote 검사 (경로 조건으로 대신함)
 - Cursor, Copilot CLI 출력 형식
 - 팀 공용 조직 프로필을 원격으로 공유하는 기능
+- 여러 조직 규칙의 동시 병합
 
 ## 14. 구현 중 확인할 사항
 
 - `~/.claude/brownfield-navigator/`가 claude-sync 동기화 대상에 포함되는지. 포함되지 않으면 사용자에게 알림
-- 스킬 로드 시 제공되는 base directory로 `compose-guide` 경로를 안정적으로 계산할 수 있는지
-- suberpower `run-hook.cmd`를 그대로 재사용할 수 있는지
