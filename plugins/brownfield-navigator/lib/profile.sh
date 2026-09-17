@@ -52,7 +52,8 @@ parse_profile_frontmatter() {
         if (item != "") print list_kind "=" item
         next
       }
-      if (match($0, /^[A-Za-z0-9_-]+:/)) {
+      # 들여쓰지 않았고 - 나 # 로 시작하지 않는 "이름:" 줄을 키로 봄 (한글, 점, 따옴표가 들어간 키도 경고 대상)
+      if (match($0, /^[^[:space:]#-][^:]*:/)) {
         key = substr($0, 1, RLENGTH - 1)
         value = trim(strip_comment(substr($0, RLENGTH + 1)))
         close_list()

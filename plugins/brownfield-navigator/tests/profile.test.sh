@@ -59,10 +59,13 @@ test_fails_on_flow_list() {
 }
 
 test_warns_on_unsupported_key() {
-  write_lines "$TEST_TMP/profile.md" "---" "name: acme" "apply: auto" "---"
+  write_lines "$TEST_TMP/profile.md" "---" "name: acme" "설명: 사내 레포" "owner.team: web" '"quoted": x' "apply: auto" "---"
   local parsed
   parsed="$(parse_profile_frontmatter "$TEST_TMP/profile.md")"
   assert_contains "$parsed" "warning=지원하지 않는 키 무시: name" "지원하지 않는 키는 경고"
+  assert_contains "$parsed" "warning=지원하지 않는 키 무시: 설명" "한글 키도 경고"
+  assert_contains "$parsed" "warning=지원하지 않는 키 무시: owner.team" "점이 들어간 키도 경고"
+  assert_contains "$parsed" 'warning=지원하지 않는 키 무시: "quoted"' "따옴표로 감싼 키도 경고"
   assert_contains "$parsed" "apply=auto" "경고 뒤에도 파싱 계속"
   assert_not_contains "$parsed" "error=" "지원하지 않는 키는 실패가 아님"
 }
