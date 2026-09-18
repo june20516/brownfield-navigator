@@ -16,6 +16,9 @@ test_templates_compose_without_warnings() {
   assert_contains "$output" "## [commit-by-user] 커밋은 직접 (개인)" "개인 템플릿 규칙 병합"
   assert_contains "$output" "## [tests] 테스트 코드 (프로젝트: your-repo)" "프로젝트 템플릿 규칙 병합"
   assert_contains "$output" "references/topic.md: 이 참고 파일이 담은 내용을 한 줄로" "참고 템플릿 description"
+  assert_occurrence_count "$output" "(조직: sample)" 1 "조직 템플릿의 규칙은 예시 하나뿐"
+  assert_occurrence_count "$output" "(개인)" 1 "개인 템플릿의 규칙은 예시 하나뿐"
+  assert_occurrence_count "$output" "(프로젝트: your-repo)" 1 "프로젝트 템플릿의 규칙은 예시 하나뿐"
 }
 
 run_test test_templates_compose_without_warnings
