@@ -2842,6 +2842,8 @@ claude --plugin-dir plugins/brownfield-navigator
 
 코어 규칙을 더하거나 id를 바꿨다면 두 README의 id 목록도 함께 고칩니다.
 
+GitHub으로 설치하면 `plugins/.../<version>/` 캐시에 복사되므로, 변경을 배포할 때는 `plugin.json`의 `version`을 올립니다.
+
 ## 라이선스
 
 MIT
@@ -2990,6 +2992,8 @@ claude --plugin-dir plugins/brownfield-navigator
 ```
 
 If you add a core rule or rename an id, update the id list in both READMEs as well.
+
+A GitHub install is copied into a versioned cache directory, so bump `version` in `plugin.json` when you ship a change.
 
 ## License
 

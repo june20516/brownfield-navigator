@@ -137,6 +137,8 @@ claude --plugin-dir plugins/brownfield-navigator
 
 If you add a core rule or rename an id, update the id list in both READMEs as well.
 
+A GitHub install is copied into a versioned cache directory, so bump `version` in `plugin.json` when you ship a change.
+
 ## License
 
 MIT
