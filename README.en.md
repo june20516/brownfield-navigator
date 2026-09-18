@@ -8,7 +8,7 @@ Organize the guidance scattered across your project memories into organization, 
 
 It is a guide, not an enforcement mechanism. If you want a different approach, Claude follows your lead.
 
-The bundled core rules and templates are written in Korean. Rules are plain Markdown sections, so you can write your own profiles in any language.
+The bundled core rules and the profile templates the harvest skill starts from are written in Korean. Rules are plain Markdown sections, so you can write your own profiles in any language.
 
 ## How it works
 
