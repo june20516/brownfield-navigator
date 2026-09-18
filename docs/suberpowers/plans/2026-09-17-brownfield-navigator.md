@@ -17,7 +17,7 @@
 - 모든 명령은 레포 루트 `~/personal/brownfield-navigator`에서 실행한다
 - 스크립트와 테스트는 bash 3.2에서 동작해야 한다. 연관 배열(`declare -A`), `mapfile`, `${var,,}`를 쓰지 않고, 픽스처는 heredoc 대신 `printf`로 만든다
 - macOS의 `bash`는 `/bin/bash` 3.2다. 테스트는 `bash plugins/brownfield-navigator/tests/<이름>.test.sh`, 전체는 `bash plugins/brownfield-navigator/tests/run-all.sh`로 실행한다
-- 파일 내용은 이 계획의 코드 블록과 **정확히 같게** 쓴다. 모든 코드 블록은 스크래치 시제품에서 bash 3.2로 전체 테스트(53개)와 `claude plugin validate` 통과를 확인한 내용이다
+- 파일 내용은 이 계획의 코드 블록과 **정확히 같게** 쓴다. 모든 코드 블록은 스크래치 시제품에서 bash 3.2로 전체 테스트(62개)와 `claude plugin validate` 통과를 확인한 내용이다
 - 이 레포는 개인 레포이므로 커밋 메시지는 `type: 한국어 설명` 형식에 attribution trailer 두 줄을 붙인다. 각 Task의 Commit step에 들어 있는 trailer는 계획 작성 세션 기준이므로, 실행 세션의 attribution 안내가 다르면 그 안내를 따른다
 - 테스트가 실패하면 코드 블록과 파일이 같은지부터 확인한다 (`diff`)
 
@@ -28,6 +28,7 @@
 | `.claude-plugin/marketplace.json` | 레포를 마켓플레이스로 등록 |
 | `README.md` | 설치, 처음 설정, 프로필 형식, 수동 호출, 주의 사항 (한국어) |
 | `README.en.md` | `README.md`의 영어판 |
+| `LICENSE` | MIT 라이선스 |
 | `.gitattributes` | bash가 읽는 파일과 마크다운의 LF 줄바꿈 고정 |
 | `plugins/brownfield-navigator/.claude-plugin/plugin.json` | 플러그인 매니페스트 |
 | `plugins/brownfield-navigator/lib/profile.sh` | 조직·프로젝트 파일 frontmatter 파싱, 참고 파일 description 추출 |
@@ -71,7 +72,6 @@ spec과 달라진 점: 플러그인 스킬은 `/<플러그인>:<스킬>`로 호�
       "name": "brownfield-navigator",
       "source": "./plugins/brownfield-navigator",
       "description": "레거시 코드베이스에서 회사 컨벤션과 기존 코드의 흐름을 따르는 작업 가이드. 조직, 개인, 프로젝트 프로필을 세션 시작 때 병합해 주입한다",
-      "version": "0.1.0",
       "author": {
         "name": "june20516"
       },
@@ -94,6 +94,7 @@ spec과 달라진 점: 플러그인 스킬은 `/<플러그인>:<스킬>`로 호�
   "author": {
     "name": "june20516"
   },
+  "license": "MIT",
   "homepage": "https://github.com/june20516/brownfield-navigator",
   "repository": "https://github.com/june20516/brownfield-navigator",
   "keywords": [
@@ -448,9 +449,13 @@ test_fails_on_stray_or_unparseable_lines() {
   write_lines "$TEST_TMP/stray-item.md" "---" "apply: auto" "  - stray" "---"
   write_lines "$TEST_TMP/nested-under-list.md" "---" "match-paths:" "  - ~/a" "    extra: x" "---"
   write_lines "$TEST_TMP/unclosed-quote.md" "---" "match-remotes:" '  - "*acme/*' "---"
+  write_lines "$TEST_TMP/junk-after-quote.md" "---" "match-remotes:" '  - "*acme/*" junk' "---"
+  write_lines "$TEST_TMP/comment-after-quote.md" "---" "match-remotes:" '  - "*acme/*" # 주석' "---"
   assert_contains "$(parse_profile_frontmatter "$TEST_TMP/stray-item.md")" "error=어느 키의 리스트 항목인지 알 수 없음" "리스트 키가 아닌 키 뒤의 항목은 실패"
   assert_contains "$(parse_profile_frontmatter "$TEST_TMP/nested-under-list.md")" "error=해석할 수 없는 줄" "리스트 항목 아래 들여쓴 키는 실패"
   assert_contains "$(parse_profile_frontmatter "$TEST_TMP/unclosed-quote.md")" "error=따옴표가 닫히지 않음" "닫히지 않은 따옴표는 실패"
+  assert_contains "$(parse_profile_frontmatter "$TEST_TMP/junk-after-quote.md")" "error=따옴표 뒤에 알 수 없는 내용" "닫는 따옴표 뒤의 내용은 실패"
+  assert_equals "remote=*acme/*" "$(parse_profile_frontmatter "$TEST_TMP/comment-after-quote.md")" "닫는 따옴표 뒤의 주석은 값에서 빠지고 실패가 아님"
 }
 
 test_warns_on_unsupported_key() {
@@ -551,7 +556,7 @@ parse_profile_frontmatter() {
     printf 'error=파일을 읽을 수 없음\n'
     return 0
   fi
-  awk -v squote="'" '
+  LC_ALL=C awk -v squote="'" '
     function trim(text) {
       sub(/^[[:space:]]+/, "", text)
       sub(/[[:space:]]+$/, "", text)
@@ -641,7 +646,7 @@ parse_profile_frontmatter() {
 read_reference_description() {
   local reference_file="$1"
   [ -f "$reference_file" ] && [ -r "$reference_file" ] || return 0
-  awk -v squote="'" '
+  LC_ALL=C awk -v squote="'" '
     NR == 1 { if ($0 != "---") exit; next }
     $0 == "---" { exit }
     match($0, /^description[[:space:]]*:/) {
@@ -720,6 +725,13 @@ test_expands_home_prefix() {
   assert_equals "/opt/*" "$(expand_home_prefix "/opt/*")" "~ 없으면 그대로"
 }
 
+test_normalizes_path_pattern() {
+  assert_equals "$HOME/work/acme" "$(normalize_path_pattern "~/work/acme/")" "~ 확장과 끝 / 제거"
+  assert_equals "/opt/acme" "$(normalize_path_pattern "/opt/acme//")" "끝 / 여러 개 제거"
+  assert_equals "/opt/acme/*" "$(normalize_path_pattern "/opt/acme/*")" "글롭으로 끝나면 그대로"
+  assert_equals "/" "$(normalize_path_pattern "/")" "패턴이 / 하나면 그대로"
+}
+
 test_path_matches_self_and_ancestors() {
   path_or_ancestor_matches "/work/acme/app" "/work/acme/app" || fail_assertion "자기 자신과 일치"
   path_or_ancestor_matches "/work/acme/app/src/deep" "/work/acme/app" || fail_assertion "하위 디렉터리에서 상위 경로와 일치"
@@ -743,6 +755,15 @@ test_match_reason_by_path() {
     "$(print_match_reason "$TEST_TMP/parsed" "$TEST_TMP/remotes" "$TEST_TMP/work/app/src")" "경로 조건 근거 출력"
 }
 
+test_match_reason_by_path_with_trailing_slash() {
+  mkdir -p "$TEST_TMP/home/work/acme/app/src"
+  printf '%s\n' "path=~/work/acme/" > "$TEST_TMP/parsed"
+  : > "$TEST_TMP/remotes"
+  assert_equals "path ~/work/acme/" \
+    "$(HOME="$TEST_TMP/home" print_match_reason "$TEST_TMP/parsed" "$TEST_TMP/remotes" "$TEST_TMP/home/work/acme/app/src")" \
+    "끝 / 가 붙은 ~ 경로 패턴도 매칭하고 근거는 원문 그대로"
+}
+
 test_no_match_returns_failure() {
   printf '%s\n' "remote=*acme/*" > "$TEST_TMP/parsed"
   printf '%s\n' "git@github.com:other/app" > "$TEST_TMP/remotes"
@@ -754,9 +775,11 @@ run_test test_normalizes_remote_url
 run_test test_lists_normalized_remotes
 run_test test_lists_nothing_outside_git
 run_test test_expands_home_prefix
+run_test test_normalizes_path_pattern
 run_test test_path_matches_self_and_ancestors
 run_test test_match_reason_by_remote
 run_test test_match_reason_by_path
+run_test test_match_reason_by_path_with_trailing_slash
 run_test test_no_match_returns_failure
 finish_tests
 ````
@@ -813,9 +836,26 @@ expand_home_prefix() {
   esac
 }
 
+# 경로 패턴을 비교할 수 있는 형태로 만듦
+#   앞머리의 ~ 를 홈 경로로 바꾸고, 끝의 / 를 뗌 (패턴이 / 하나면 그대로 둠)
+#   비교 후보는 dirname 으로 만들어 "/" 말고는 / 로 끝나지 않으므로, 끝 / 를 남겨 두면 어떤 경로에도 맞지 않는다
+normalize_path_pattern() {
+  local pattern
+  pattern="$(expand_home_prefix "$1")"
+  while [ "$pattern" != "/" ] && [ "${pattern%/}" != "$pattern" ]; do
+    pattern="${pattern%/}"
+  done
+  printf '%s\n' "$pattern"
+}
+
 # 대상 경로 또는 그 상위 디렉터리 중 하나가 패턴과 일치하면 성공
+# 상위로 올라가며 비교하므로 절대 경로만 받는다. 상대 경로는 dirname 이 `.` 에서 멈춰 끝나지 않는다
 path_or_ancestor_matches() {
   local candidate="$1" pattern="$2"
+  case "$candidate" in
+    /*) ;;
+    *) return 1 ;;
+  esac
   while :; do
     [[ "$candidate" == $pattern ]] && return 0
     [ "$candidate" = "/" ] && return 1
@@ -839,7 +879,7 @@ print_match_reason() {
         done < "$remotes_file"
         ;;
       path)
-        if path_or_ancestor_matches "$target_dir" "$(expand_home_prefix "$pattern")"; then
+        if path_or_ancestor_matches "$target_dir" "$(normalize_path_pattern "$pattern")"; then
           printf 'path %s\n' "$pattern"
           return 0
         fi
@@ -915,6 +955,30 @@ second-rule" "$(cat "$TEST_TMP/layer/ids")" "id 섹션만 등장 순서대로"
   assert_contains "$(cat "$TEST_TMP/layer/second-rule.body")" "## [inside-indented-code] 들여쓴 코드 블록 안" "들여쓴 코드 블록 안 헤딩도 본문으로 유지"
 }
 
+test_warns_when_frontmatter_is_not_closed() {
+  write_lines "$TEST_TMP/rules.md" "---" "name: sample" "## [a-rule] 규칙" "본문"
+  extract_rule_sections "$TEST_TMP/rules.md" "$TEST_TMP/layer"
+  assert_empty "$(cat "$TEST_TMP/layer/ids")" "닫는 --- 가 없으면 규칙을 하나도 읽지 못함"
+  assert_equals "frontmatter가 닫히지 않아 규칙을 읽지 못함" "$(cat "$TEST_TMP/layer/warnings")" "규칙이 사라진 이유를 진단으로 남김"
+}
+
+test_warns_on_heading_that_is_not_a_valid_id() {
+  write_lines "$TEST_TMP/rules.md" \
+    "## [My-Rule] 대문자" "대문자 본문" \
+    "## [rule_1] 밑줄" "밑줄 본문" \
+    "##  [two-spaces] 공백 두 개" "공백 본문" \
+    "## 설명용 섹션" "설명 본문" \
+    "## [ok-rule] 정상" "정상 본문"
+  extract_rule_sections "$TEST_TMP/rules.md" "$TEST_TMP/layer"
+  local warnings
+  warnings="$(cat "$TEST_TMP/layer/warnings")"
+  assert_equals "ok-rule" "$(cat "$TEST_TMP/layer/ids")" "id 형식에 맞는 섹션만 병합 대상"
+  assert_contains "$warnings" "id 형식([a-z0-9-]+)이 아닌 규칙 헤딩 무시: ## [My-Rule] 대문자" "대문자 id 진단"
+  assert_contains "$warnings" "id 형식([a-z0-9-]+)이 아닌 규칙 헤딩 무시: ## [rule_1] 밑줄" "밑줄 id 진단"
+  assert_contains "$warnings" "id 형식([a-z0-9-]+)이 아닌 규칙 헤딩 무시: ##  [two-spaces] 공백 두 개" "공백 두 개 진단"
+  assert_not_contains "$warnings" "설명용 섹션" "id를 쓰려 하지 않은 ## 섹션은 진단 없음"
+}
+
 test_merges_layers_in_place() {
   write_lines "$TEST_TMP/core.md" "## [alpha] 코어 알파" "코어 알파 본문" "## [beta] 코어 베타" "코어 베타 본문"
   write_lines "$TEST_TMP/project.md" "## [alpha] 프로젝트 알파" "프로젝트 알파 본문" "## [gamma] 프로젝트 감마" "감마 본문"
@@ -959,6 +1023,8 @@ test_prints_first_paragraph_for_summary_source() {
 }
 
 run_test test_extracts_only_id_sections
+run_test test_warns_when_frontmatter_is_not_closed
+run_test test_warns_on_heading_that_is_not_a_valid_id
 run_test test_merges_layers_in_place
 run_test test_prints_heading_without_title
 run_test test_prints_first_paragraph_for_summary_source
@@ -982,13 +1048,16 @@ finish_tests
 #   <출력 디렉터리>/ids          등장 순서대로 id 목록
 #   <출력 디렉터리>/<id>.title   헤딩의 제목 부분
 #   <출력 디렉터리>/<id>.body    헤딩 다음 줄부터 다음 ## 헤딩 전까지
+#   <출력 디렉터리>/warnings     규칙이 조용히 빠진 이유. 호출자가 경고로 올린다 (없으면 빈 파일)
 # frontmatter, id 없는 ## 섹션, 첫 ## 헤딩 이전 내용은 건너뜀
 # 코드 블록 안의 ## 줄은 헤딩으로 보지 않음
 extract_rule_sections() {
   local markdown_file="$1" output_dir="$2"
   mkdir -p "$output_dir"
   : > "$output_dir/ids"
-  awk -v output_dir="$output_dir" '
+  : > "$output_dir/warnings"
+  LC_ALL=C awk -v output_dir="$output_dir" '
+    BEGIN { warnings_file = output_dir "/warnings" }
     NR == 1 && $0 == "---" { in_frontmatter = 1; next }
     in_frontmatter { if ($0 == "---") in_frontmatter = 0; next }
     /^[[:space:]]*```/ { in_code_block = !in_code_block }
@@ -1009,10 +1078,17 @@ extract_rule_sections() {
           seen[section_id] = 1
           print section_id >> (output_dir "/ids")
         }
+      } else if ($0 ~ /^##[[:space:]]+\[/) {
+        # id를 쓰려 한 헤딩인데 형식이 달라 규칙으로 읽히지 않는다. 설명용 ## 섹션과 구분해 알린다
+        print "id 형식([a-z0-9-]+)이 아닌 규칙 헤딩 무시: " $0 >> warnings_file
       }
       next
     }
     body_file != "" { print >> body_file }
+    END {
+      # 닫는 --- 가 없으면 파일 전체가 frontmatter로 읽혀 규칙이 하나도 남지 않는다
+      if (in_frontmatter) print "frontmatter가 닫히지 않아 규칙을 읽지 못함" >> warnings_file
+    }
   ' "$markdown_file"
 }
 
@@ -1054,14 +1130,14 @@ print_merged_sections() {
 
 # 앞쪽 빈 줄을 건너뛰고 첫 문단(다음 빈 줄 전까지)만 출력
 print_first_paragraph() {
-  awk '
+  LC_ALL=C awk '
     /^[[:space:]]*$/ { if (started) exit; next }
     { started = 1; print }
   ' "$1"
 }
 
 print_without_trailing_blank_lines() {
-  awk '
+  LC_ALL=C awk '
     { lines[NR] = $0 }
     END {
       last = NR
@@ -1241,11 +1317,11 @@ TDD, 계획 작성·실행 같은 워크플로우 스킬의 단계(커밋, 테�
 
 ## [structural-evidence] 구조적 근거로 판정
 
-간헐적으로 나타나는 현상은 조건을 바꿔 가며 표본을 늘리지 않고, 원인이 되는 구조가 제거됐는지를 직접 확인해 판정한다. 구조 확인과 함께 같은 조건에서 비교 대상이 실제로 반응한 A/B 측정이 1회 있으면 충분하다.
+간헐적으로 나타나는 현상은 조건을 바꿔 가며 표본을 늘리지 않고, 원인이 되는 구조가 제거됐는지를 직접 확인해 판정한다. 같은 입력과 같은 검출 방법으로, 원인 구조가 남은 쪽(수정 전 빌드 등)에서는 증상이 나고 제거한 쪽에서는 나지 않는 비교를 한 번 확보하면 구조 확인과 함께 판정 근거로 충분하다.
 
 1. 원인이 되는 구조가 제거됐는지 직접 측정한다
-2. 같은 조건(같은 입력, 같은 검출 방법)에서 비교 대상이 실제로 반응한 A/B 측정이 1회 있으면 1과 함께 판정 근거로 충분하다
-3. 이후 측정에서 비교 대상이 반응하지 않아도 앞의 A/B는 약해지지 않는다. 그 사실을 그대로 보고한다
+2. 같은 입력과 같은 검출 방법으로, 원인 구조가 남은 쪽에서는 증상이 나고 제거한 쪽에서는 나지 않는 비교를 한 번 확보하면 1과 함께 판정 근거로 충분하다
+3. 이후 측정에서 원인 구조가 남은 쪽이 증상을 내지 않아도 앞의 비교는 약해지지 않는다. 그 사실을 그대로 보고한다
 4. 결정론적인 증상과 타이밍에 의존하는 증상을 구분하고, 반복 측정은 결정론적인 증상에만 쓴다
 
 **Why:** 확률적인 현상은 표본을 늘려도 "이번엔 안 났다"만 반복되어 끝나지 않는다.
@@ -1372,6 +1448,28 @@ write_project_file() {
   done
 }
 
+# 출력은 버리고 종료 코드만 확인 (compose-guide 의 종료 코드는 항상 0)
+assert_compose_guide_exit_zero() {
+  local label="$1"
+  shift
+  run_compose_guide "$@" >/dev/null 2>&1
+  assert_equals 0 "$?" "$label"
+}
+
+# bin/compose-guide 의 count_characters 와 같은 방식으로 파일의 UTF-8 문자 수를 셈
+count_output_characters() {
+  LC_ALL=C tr -d '\200-\277' < "$1" | wc -c | tr -d ' '
+}
+
+# 규칙 본문 길이만 다른 acme 조직 프로필을 씀. 가이드 전체 길이를 원하는 값에 맞출 때 쓴다
+write_acme_profile_with_body_length() {
+  local body_length="$1" body
+  body="$(awk -v goal="$body_length" 'BEGIN { for (i = 0; i < goal; i++) printf "가" }')"
+  write_lines "$TEST_TMP/profiles/orgs/acme/profile.md" \
+    "---" "match-remotes:" '  - "*acme/*"' "---" \
+    "## [long-rule] 긴 규칙" "$body"
+}
+
 test_empty_without_profile_home() {
   make_git_repo "$TEST_TMP/app" "git@github.com:acme/app.git"
   assert_empty "$(run_compose_guide "$TEST_TMP/app")" "프로필 홈이 없으면 빈 출력"
@@ -1435,6 +1533,34 @@ test_notice_when_guide_exceeds_budget() {
     "## [medium-rule] 중간 규칙" "$medium_body"
   make_git_repo "$TEST_TMP/beta-app" "git@github.com:beta/app.git"
   assert_not_contains "$(run_compose_guide "$TEST_TMP/beta-app")" "> 이 가이드는" "바이트가 아니라 문자 수로 셈 (한글 4,000자 규칙은 예산 안)"
+}
+
+test_budget_boundary_is_inclusive() {
+  make_git_repo "$TEST_TMP/app" "git@github.com:acme/app.git"
+  # 본문 길이를 1자 늘리면 가이드도 1자 길어지므로, 짧은 본문으로 한 번 재서 정확히 9,000자가 되는 길이를 구한다
+  local probe_body_length=100 probe_length exact_body_length
+  write_acme_profile_with_body_length "$probe_body_length"
+  run_compose_guide "$TEST_TMP/app" > "$TEST_TMP/probe-output"
+  probe_length="$(count_output_characters "$TEST_TMP/probe-output")"
+  exact_body_length=$((probe_body_length + 9000 - probe_length))
+
+  write_acme_profile_with_body_length "$exact_body_length"
+  run_compose_guide "$TEST_TMP/app" > "$TEST_TMP/exact-output"
+  assert_equals 9000 "$(count_output_characters "$TEST_TMP/exact-output")" "예산 경계에 정확히 맞춘 가이드"
+  assert_not_contains "$(cat "$TEST_TMP/exact-output")" "> 이 가이드는" "정확히 9,000자면 안내 없음"
+
+  write_acme_profile_with_body_length "$((exact_body_length + 1))"
+  assert_contains "$(run_compose_guide "$TEST_TMP/app")" "> 이 가이드는 9001자로" "9,001자면 안내"
+}
+
+test_exit_code_is_always_zero() {
+  make_git_repo "$TEST_TMP/app" "git@github.com:acme/app.git"
+  assert_compose_guide_exit_zero "프로필 홈이 없어도 0" "$TEST_TMP/app"
+  write_org_profile acme "match-remotes:" '  - "*acme/*"'
+  assert_compose_guide_exit_zero "가이드를 출력해도 0" "$TEST_TMP/app"
+  write_lines "$TEST_TMP/profiles/orgs/broken/profile.md" "apply: auto"
+  assert_compose_guide_exit_zero "파싱에 실패해 경고를 남겨도 0" "$TEST_TMP/app"
+  assert_compose_guide_exit_zero "없는 대상 디렉터리도 0" "$TEST_TMP/missing"
 }
 
 test_project_matching_and_layer_precedence() {
@@ -1540,6 +1666,12 @@ test_manual_mode_merges_suggest_and_off() {
   make_git_repo "$TEST_TMP/gamma-app" "git@github.com:gamma/app.git"
   assert_contains "$(run_compose_guide --manual "$TEST_TMP/beta-app")" "## [beta-rule] beta 규칙 (조직: beta)" "--manual은 suggest도 병합"
   assert_contains "$(run_compose_guide --manual "$TEST_TMP/gamma-app")" "## [gamma-rule] gamma 규칙 (조직: gamma)" "--manual은 off도 병합"
+
+  write_org_profile delta "match-remotes:" '  - "*delta/*"'
+  write_project_file delta app "apply: off" "match-remotes:" '  - "*delta/app"' -- "## [delta-app-rule] 델타 앱 규칙" "본문"
+  make_git_repo "$TEST_TMP/delta-app" "git@github.com:delta/app.git"
+  assert_empty "$(run_compose_guide "$TEST_TMP/delta-app")" "프로젝트 off는 기본 호출에서 출력 없음"
+  assert_contains "$(run_compose_guide --manual "$TEST_TMP/delta-app")" "## [delta-app-rule] 델타 앱 규칙 (프로젝트: app)" "--manual은 프로젝트 off도 병합"
 }
 
 test_warnings_only_when_nothing_matches() {
@@ -1563,6 +1695,36 @@ test_warns_on_unreadable_profile_files() {
   assert_contains "$output" "건너뜀 $TEST_TMP/profiles/orgs/folder/profile.md: 파일을 읽을 수 없음" "디렉터리인 조직 프로필은 경고"
   assert_contains "$output" "건너뜀 $TEST_TMP/profiles/orgs/acme/projects/linked.md: 파일을 읽을 수 없음" "깨진 링크인 프로젝트 파일은 경고"
   assert_contains "$output" "## [acme-rule]" "읽을 수 있는 조직 프로필은 계속 병합"
+}
+
+test_warns_on_profile_without_match_conditions() {
+  write_lines "$TEST_TMP/profiles/orgs/acme/profile.md" \
+    "---" "apply: auto" "match-paths: []" "---" "" \
+    "## [acme-rule] acme 규칙" "acme 규칙 본문"
+  write_org_profile beta "match-remotes:" '  - "*beta/*"'
+  write_project_file beta no-condition "apply: auto" -- "## [no-condition-rule] 조건 없는 규칙" "본문"
+  make_git_repo "$TEST_TMP/beta-app" "git@github.com:beta/app.git"
+  local output
+  output="$(run_compose_guide "$TEST_TMP/beta-app")"
+  assert_contains "$output" "건너뜀 $TEST_TMP/profiles/orgs/acme/profile.md: 매칭 조건 없음" "조직 프로필의 매칭 조건 없음 경고"
+  assert_contains "$output" "건너뜀 $TEST_TMP/profiles/orgs/beta/projects/no-condition.md: 매칭 조건 없음" "프로젝트 파일의 매칭 조건 없음 경고"
+  assert_not_contains "$output" "no-condition-rule" "매칭 조건이 없는 프로젝트 파일은 병합하지 않음"
+  assert_contains "$output" "## [beta-rule] beta 규칙 (조직: beta)" "매칭 조건이 있는 조직은 계속 병합"
+}
+
+test_warns_when_rule_sections_are_dropped() {
+  write_lines "$TEST_TMP/profiles/orgs/acme/profile.md" \
+    "---" "match-remotes:" '  - "*acme/*"' "---" "" \
+    "## [Acme-Rule] 대문자 id" "대문자 본문" \
+    "## [acme-rule] 정상 id" "정상 본문"
+  write_lines "$TEST_TMP/profiles/personal.md" "---" "## [my-habit] 내 습관" "습관 본문"
+  make_git_repo "$TEST_TMP/app" "git@github.com:acme/app.git"
+  local output
+  output="$(run_compose_guide "$TEST_TMP/app")"
+  assert_contains "$output" "$TEST_TMP/profiles/orgs/acme/profile.md: id 형식([a-z0-9-]+)이 아닌 규칙 헤딩 무시: ## [Acme-Rule] 대문자 id" "id 형식이 아닌 헤딩 경고"
+  assert_contains "$output" "$TEST_TMP/profiles/personal.md: frontmatter가 닫히지 않아 규칙을 읽지 못함" "닫히지 않은 frontmatter 경고"
+  assert_not_contains "$output" "my-habit" "닫히지 않은 frontmatter의 규칙은 병합되지 않음"
+  assert_contains "$output" "## [acme-rule] 정상 id (조직: acme)" "형식에 맞는 규칙은 계속 병합"
 }
 
 test_invalid_utf8_in_profile_keeps_full_guide() {
@@ -1615,6 +1777,8 @@ run_test test_empty_when_nothing_matches
 run_test test_merges_core_and_org_on_ssh_remote
 run_test test_core_sections_are_summarized
 run_test test_notice_when_guide_exceeds_budget
+run_test test_budget_boundary_is_inclusive
+run_test test_exit_code_is_always_zero
 run_test test_project_matching_and_layer_precedence
 run_test test_matches_https_remote_with_trailing_slash
 run_test test_matches_path_without_git_from_subdirectory
@@ -1626,6 +1790,8 @@ run_test test_multiple_projects_use_last_apply_and_warn
 run_test test_manual_mode_merges_suggest_and_off
 run_test test_warnings_only_when_nothing_matches
 run_test test_warns_on_unreadable_profile_files
+run_test test_warns_on_profile_without_match_conditions
+run_test test_warns_when_rule_sections_are_dropped
 run_test test_invalid_utf8_in_profile_keeps_full_guide
 run_test test_unsupported_key_warning_with_guide
 run_test test_two_auto_orgs_apply_first_only
@@ -1695,6 +1861,25 @@ read_apply_value() {
   sed -n 's/^apply=//p' "$1" | tail -n 1
 }
 
+# 매칭 조건이 하나도 없는 프로필은 어떤 레포에도 맞지 않는 설정 오류이므로 경고를 남기고 실패 반환
+check_match_conditions_or_warn() {
+  local profile_file="$1" parsed_file="$2"
+  grep -qE '^(remote|path)=' "$parsed_file" && return 0
+  add_warning "건너뜀 $profile_file: 매칭 조건 없음 (match-remotes, match-paths 모두 비어 있음)"
+  return 1
+}
+
+# 프로필 한 층을 규칙 섹션으로 나눠 병합하고, 규칙이 조용히 빠진 진단을 경고로 옮김
+merge_profile_layer() {
+  local markdown_file="$1" source_label="$2" layer_dir="$3" merged_dir="$4" diagnostic
+  rm -rf "$layer_dir"
+  extract_rule_sections "$markdown_file" "$layer_dir"
+  while IFS= read -r diagnostic; do
+    add_warning "$markdown_file: $diagnostic"
+  done < "$layer_dir/warnings"
+  merge_rule_layer "$layer_dir" "$source_label" "$merged_dir"
+}
+
 # 조직 하나를 매칭하고 적용 값에 따라 분류
 #   auto    $WORK_DIR/auto-orgs 에 "조직<TAB>매칭 근거" 추가
 #   suggest $WORK_DIR/suggest-orgs 에 조직 이름 추가
@@ -1708,6 +1893,7 @@ evaluate_org() {
   org_name="$(basename "$org_dir")"
   org_parsed="$WORK_DIR/org-$org_name.parsed"
   parse_or_warn "$org_profile" "$org_parsed" || return 0
+  check_match_conditions_or_warn "$org_profile" "$org_parsed" || return 0
   match_reason="$(print_match_reason "$org_parsed" "$WORK_DIR/remotes" "$TARGET_DIR")" || return 0
 
   matched_projects_file="$WORK_DIR/projects-$org_name"
@@ -1719,6 +1905,7 @@ evaluate_org() {
     project_name="$(basename "$project_file" .md)"
     project_parsed="$WORK_DIR/project-$org_name-$project_name.parsed"
     parse_or_warn "$project_file" "$project_parsed" || continue
+    check_match_conditions_or_warn "$project_file" "$project_parsed" || continue
     print_match_reason "$project_parsed" "$WORK_DIR/remotes" "$TARGET_DIR" >/dev/null || continue
     printf '%s\n' "$project_file" >> "$matched_projects_file"
     apply_value="$(read_apply_value "$project_parsed")"
@@ -1776,18 +1963,13 @@ print_suggestions() {
 
 print_rule_sections() {
   local org_name="$1" project_file merged_dir="$WORK_DIR/merged"
-  extract_rule_sections "$CORE_SKILL_FILE" "$WORK_DIR/layer-core"
-  merge_rule_layer "$WORK_DIR/layer-core" "코어" "$merged_dir"
-  extract_rule_sections "$PROFILE_HOME/orgs/$org_name/profile.md" "$WORK_DIR/layer-org"
-  merge_rule_layer "$WORK_DIR/layer-org" "조직: $org_name" "$merged_dir"
+  merge_profile_layer "$CORE_SKILL_FILE" "코어" "$WORK_DIR/layer-core" "$merged_dir"
+  merge_profile_layer "$PROFILE_HOME/orgs/$org_name/profile.md" "조직: $org_name" "$WORK_DIR/layer-org" "$merged_dir"
   if [ -f "$PROFILE_HOME/personal.md" ]; then
-    extract_rule_sections "$PROFILE_HOME/personal.md" "$WORK_DIR/layer-personal"
-    merge_rule_layer "$WORK_DIR/layer-personal" "개인" "$merged_dir"
+    merge_profile_layer "$PROFILE_HOME/personal.md" "개인" "$WORK_DIR/layer-personal" "$merged_dir"
   fi
   while IFS= read -r project_file; do
-    rm -rf "$WORK_DIR/layer-project"
-    extract_rule_sections "$project_file" "$WORK_DIR/layer-project"
-    merge_rule_layer "$WORK_DIR/layer-project" "프로젝트: $(basename "$project_file" .md)" "$merged_dir"
+    merge_profile_layer "$project_file" "프로젝트: $(basename "$project_file" .md)" "$WORK_DIR/layer-project" "$merged_dir"
   done < "$WORK_DIR/projects-$org_name"
   print_merged_sections "$merged_dir" "코어"
 }
@@ -1937,6 +2119,13 @@ run_session_start() {
   printf '%s' "$hook_input" | BROWNFIELD_NAVIGATOR_HOME="$TEST_TMP/profiles" "$BASH" "$PLUGIN_ROOT/hooks/session-start" 2>&1
 }
 
+# 훅의 종료 코드만 출력한다 (출력은 버린다)
+session_start_exit_code() {
+  local hook_input="$1"
+  printf '%s' "$hook_input" | BROWNFIELD_NAVIGATOR_HOME="$TEST_TMP/profiles" "$BASH" "$PLUGIN_ROOT/hooks/session-start" >/dev/null 2>&1
+  printf '%s' "$?"
+}
+
 # 훅 출력 JSON을 파싱해 additionalContext 값을 출력. JSON이 올바르지 않으면 INVALID_JSON 출력
 # Claude Code처럼 잘못된 UTF-8 바이트는 대체 문자로 읽음
 read_additional_context() {
@@ -1944,6 +2133,8 @@ read_additional_context() {
 import json, sys
 try:
     data = json.loads(sys.stdin.buffer.read().decode("utf-8", "replace"))
+    if data["hookSpecificOutput"]["hookEventName"] != "SessionStart":
+        raise ValueError("hookEventName")
     sys.stdout.write(data["hookSpecificOutput"]["additionalContext"])
 except Exception as error:
     sys.stdout.write("INVALID_JSON: %s" % error)
@@ -1960,13 +2151,17 @@ test_outputs_valid_json_with_special_characters() {
     "## [special] 특수문자" \
     "$(printf '따옴표 "q" 백슬래시 \\ 탭\t끝')" \
     "$(printf '폼피드\f와 제어문자\001 제거')"
+  # 개인 프로필은 frontmatter를 파싱하지 않으므로 CRLF로 저장된 파일의 CR이 그대로 들어온다
+  printf '%s\r\n' "## [crlf] 캐리지 리턴" "본문" > "$TEST_TMP/profiles/personal.md"
   make_git_repo "$TEST_TMP/app" "git@github.com:acme/app.git"
-  local context
-  context="$(run_session_start "{\"session_id\":\"s\",\"cwd\":\"$TEST_TMP/app\",\"hook_event_name\":\"SessionStart\"}" | read_additional_context)"
-  assert_not_contains "$context" "INVALID_JSON" "올바른 JSON 출력"
-  assert_contains "$context" "# brownfield-navigator 가이드" "가이드가 additionalContext에 들어감"
+  local hook_input context
+  hook_input="{\"session_id\":\"s\",\"cwd\":\"$TEST_TMP/app\",\"hook_event_name\":\"SessionStart\"}"
+  assert_equals "0" "$(session_start_exit_code "$hook_input")" "훅은 종료 코드 0"
+  context="$(run_session_start "$hook_input" | read_additional_context)"
+  assert_not_contains "$context" "INVALID_JSON" "CR이 섞여 있어도 올바른 JSON 출력"
   assert_contains "$context" "$(printf '따옴표 "q" 백슬래시 \\ 탭\t끝')" "따옴표, 백슬래시, 탭 보존"
   assert_contains "$context" "폼피드와 제어문자 제거" "그 밖의 제어문자는 제거"
+  assert_contains "$context" "$(printf '## [special] 특수문자 (조직: acme)\n따옴표')" "줄 구조 보존"
 }
 
 test_keeps_guide_after_invalid_utf8() {
@@ -1983,6 +2178,7 @@ test_outputs_nothing_without_match() {
   write_acme_profile "## [rule] 규칙" "본문"
   make_git_repo "$TEST_TMP/app" "git@github.com:other/app.git"
   assert_empty "$(run_session_start "{\"cwd\":\"$TEST_TMP/app\"}")" "매칭이 없으면 빈 출력"
+  assert_equals "0" "$(session_start_exit_code "{\"cwd\":\"$TEST_TMP/app\"}")" "매칭이 없어도 종료 코드 0"
 }
 
 test_falls_back_to_project_dir_env() {
@@ -2002,11 +2198,26 @@ test_prefers_cwd_over_project_dir_env() {
   assert_empty "$output" "입력의 cwd가 CLAUDE_PROJECT_DIR보다 우선"
 }
 
+test_exits_zero_when_compose_guide_fails() {
+  local broken="$TEST_TMP/broken-plugin"
+  mkdir -p "$broken/bin" "$broken/hooks"
+  cp "$PLUGIN_ROOT/hooks/session-start" "$broken/hooks/session-start"
+  printf '이것은 실행 파일이 아니다\n' > "$broken/bin/compose-guide"
+  chmod -x "$broken/bin/compose-guide"
+  mkdir -p "$TEST_TMP/app"
+  local output exit_code
+  output="$(printf '{"cwd":"%s"}' "$TEST_TMP/app" | "$BASH" "$broken/hooks/session-start" 2>&1)"
+  exit_code=$?
+  assert_equals "0" "$exit_code" "compose-guide를 실행할 수 없어도 종료 코드 0"
+  assert_empty "$output" "그때는 아무것도 출력하지 않음"
+}
+
 run_test test_outputs_valid_json_with_special_characters
 run_test test_keeps_guide_after_invalid_utf8
 run_test test_outputs_nothing_without_match
 run_test test_falls_back_to_project_dir_env
 run_test test_prefers_cwd_over_project_dir_env
+run_test test_exits_zero_when_compose_guide_fails
 finish_tests
 ````
 
@@ -2383,7 +2594,7 @@ argument-hint: "[조직 이름 또는 메모리 경로]"
 - 프로필 홈: 환경변수 `BROWNFIELD_NAVIGATOR_HOME`, 없으면 `~/.claude/brownfield-navigator`
 - 파일 형식과 예시: `${CLAUDE_PLUGIN_ROOT}/templates/`의 `org-profile.md`, `personal.md`, `project.md`, `reference.md`
 - 코어 규칙: `${CLAUDE_PLUGIN_ROOT}/skills/brownfield-navigator/SKILL.md`의 `## [id]` 섹션
-- 미리보기: `"${CLAUDE_PLUGIN_ROOT}/bin/compose-guide" "<레포 경로>"`
+- 미리보기: `"${CLAUDE_PLUGIN_ROOT}/bin/compose-guide" --manual "<레포 경로>"` (`--manual`은 `apply`가 `suggest`나 `off`여도 매칭 근거를 보기 위해 붙인다)
 - 중복 판정 기준: 전역 `~/.claude/CLAUDE.md`와 각 레포 루트의 `CLAUDE.md`
 
 ## 1. 수집
@@ -2456,7 +2667,7 @@ argument-hint: "[조직 이름 또는 메모리 경로]"
 ## 6. 보고
 
 1. 생성하거나 수정한 파일 목록
-2. 포함한 레포마다 `compose-guide` 미리보기. 매칭 근거 줄과 경고 절을 보여주고, 경고가 있으면 고친다. 다시 고칠 때도 5단계 3항의 승인 원칙을 따른다
+2. 포함한 레포마다 `--manual`을 붙인 `compose-guide` 미리보기. 매칭 근거 줄과 경고 절을 보여주고, 경고가 있으면 고친다. 미리보기는 `apply` 값과 무관하게 병합 결과를 보여주므로, 조직의 `apply`가 `suggest`나 `off`면 실제 세션에서는 각각 한 줄 안내와 주입 없음이 정상이라고 함께 알린다. 다시 고칠 때도 5단계 3항의 승인 원칙을 따른다
 3. 정리 후보 메모리 목록: 프로필로 옮겨진 메모리, CLAUDE.md(전역·레포)와 중복인 메모리. **삭제하지 않고 목록만 보고한다.** 정리는 사용자가 직접 한다
 4. 프로필 홈은 플러그인 바깥의 사용자 파일이므로, 다른 기기에서 쓰려면 따로 백업하거나 동기화해야 한다고 한 줄로 알린다
 ````
@@ -2486,6 +2697,7 @@ EOF
 - Create: `README.md`
 - Create: `README.en.md`
 - Create: `.gitattributes`
+- Create: `LICENSE`
 - Create: `plugins/brownfield-navigator/tests/readme.test.sh`
 
 - [ ] **Step 1: 한국어 README 작성**
@@ -2629,6 +2841,10 @@ claude --plugin-dir plugins/brownfield-navigator
 ```
 
 코어 규칙을 더하거나 id를 바꿨다면 두 README의 id 목록도 함께 고칩니다.
+
+## 라이선스
+
+MIT
 ````
 
 - [ ] **Step 2: 영어 README 작성**
@@ -2774,6 +2990,10 @@ claude --plugin-dir plugins/brownfield-navigator
 ```
 
 If you add a core rule or rename an id, update the id list in both READMEs as well.
+
+## License
+
+MIT
 ````
 
 - [ ] **Step 3: 줄바꿈 속성 작성**
@@ -2786,16 +3006,45 @@ Windows에서 `core.autocrlf`로 받아도 bash가 읽는 파일이 CRLF로 바�
 # Windows에서 core.autocrlf로 받아도 bash가 읽는 파일은 LF 줄바꿈을 유지
 # (CRLF면 스크립트가 실행되지 않고, 규칙 제목 끝에 \r이 남음)
 # 훅 스크립트는 Windows 자동 감지를 피하려고 확장자 없는 이름을 쓴다. 새 훅이 추가돼도 덮이도록
-# hooks/ 전체를 지정하고, Windows에서 cmd.exe가 실행해야 하는 .cmd 만 git 기본값(autocrlf)에 맡김
+# hooks/ 전체를 지정한다. run-hook.cmd 는 Unix에서 bash가 파싱하는 폴리글롯이라 LF를 유지해야 한다
 plugins/brownfield-navigator/bin/* text eol=lf
 plugins/brownfield-navigator/hooks/** text eol=lf
-plugins/brownfield-navigator/hooks/**/*.cmd !text !eol
 plugins/brownfield-navigator/lib/*.sh text eol=lf
 plugins/brownfield-navigator/tests/*.sh text eol=lf
 *.md text eol=lf
 ````
 
-- [ ] **Step 4: README의 코어 규칙 id 목록을 지키는 테스트 작성**
+- [ ] **Step 4: 라이선스 파일 작성**
+
+공개 레포에 라이선스가 없으면 다른 사람이 쓰거나 고칠 근거가 없다. `plugin.json`의 `license` 필드와 짝이다.
+
+`LICENSE`
+
+````bash
+MIT License
+
+Copyright (c) 2026 Bran
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+````
+
+- [ ] **Step 5: README의 코어 규칙 id 목록을 지키는 테스트 작성**
 
 README는 코어 규칙 id 16개를 직접 나열한다. 코어 스킬에서 id가 늘거나 바뀌면 두 README가 조용히 틀린 문서가 되므로 테스트로 막는다.
 
@@ -2824,15 +3073,15 @@ run_test test_readme_core_ids_match_skill
 finish_tests
 ````
 
-- [ ] **Step 5: 전체 테스트와 검증**
+- [ ] **Step 6: 전체 테스트와 검증**
 
 실행: `bash plugins/brownfield-navigator/tests/run-all.sh; echo "exit=$?"; claude plugin validate . && claude plugin validate plugins/brownfield-navigator; git check-attr eol -- plugins/brownfield-navigator/bin/compose-guide plugins/brownfield-navigator/hooks/run-hook.cmd README.md`
 기대: 테스트 파일 7개 모두 `0개 실패`, 마지막 줄 `테스트 파일 7개 모두 통과`, `exit=0`, 검증 두 번 모두 `✔ Validation passed`, 속성은 `compose-guide: eol: lf`, `run-hook.cmd: eol: unspecified`, `README.md: eol: lf`
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add README.md README.en.md .gitattributes plugins/brownfield-navigator/tests/readme.test.sh
+git add README.md README.en.md .gitattributes LICENSE plugins/brownfield-navigator/tests/readme.test.sh
 git commit -F - <<'EOF'
 docs: 설치, 프로필 형식, 사용법을 담은 README(한국어, 영어)와 줄바꿈 속성 추가
 
