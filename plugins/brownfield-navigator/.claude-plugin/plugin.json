@@ -1,0 +1,19 @@
+{
+  "name": "brownfield-navigator",
+  "description": "레거시 코드베이스에서 회사 컨벤션과 기존 코드의 흐름을 따르는 작업 가이드. 조직, 개인, 프로젝트 프로필을 세션 시작 때 병합해 주입한다",
+  "version": "0.1.0",
+  "author": {
+    "name": "june20516"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/june20516/brownfield-navigator",
+  "repository": "https://github.com/june20516/brownfield-navigator",
+  "keywords": [
+    "brownfield",
+    "legacy",
+    "conventions",
+    "skills",
+    "hooks",
+    "korean"
+  ]
+}

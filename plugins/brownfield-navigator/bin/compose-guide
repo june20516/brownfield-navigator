@@ -1,0 +1,263 @@
+#!/usr/bin/env bash
+# 대상 디렉터리에 맞는 조직·프로젝트 프로필을 찾아 brownfield-navigator 가이드를 출력
+#
+# 사용법: compose-guide [--manual] [대상 디렉터리]
+#   --manual  수동 호출용. apply 가 suggest, off 인 조직과 프로젝트도 병합
+#
+# 출력할 것이 없으면 빈 출력, 종료 코드는 항상 0
+# bash 3.2 호환 (macOS 기본 /bin/bash)
+
+set -u
+# 프로필에 잘못된 UTF-8 바이트(예: 다른 인코딩으로 저장한 파일)가 섞여도 awk, sed가 중간에 멈춰
+# 뒤쪽 규칙이 조용히 빠지지 않게 바이트 단위로 처리
+export LC_ALL=C
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
+PLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
+CORE_SKILL_FILE="$PLUGIN_ROOT/skills/brownfield-navigator/SKILL.md"
+PROFILE_HOME="${BROWNFIELD_NAVIGATOR_HOME:-$HOME/.claude/brownfield-navigator}"
+SKILL_COMMAND="/brownfield-navigator:brownfield-navigator"
+# 훅 출력은 10,000자를 넘으면 앞부분 미리보기만 전달되므로 여유를 두고 잡은 예산
+GUIDE_CHARACTER_BUDGET=9000
+
+. "$PLUGIN_ROOT/lib/profile.sh"
+. "$PLUGIN_ROOT/lib/match.sh"
+. "$PLUGIN_ROOT/lib/sections.sh"
+
+WORK_DIR=""
+TARGET_DIR=""
+
+add_warning() {
+  printf '%s\n' "$1" >> "$WORK_DIR/warnings"
+}
+
+# 프로필 파일을 파싱해 결과 파일에 저장. 실패하면 경고를 남기고 실패 반환
+parse_or_warn() {
+  local profile_file="$1" parsed_file="$2" error_message warning_message
+  parse_profile_frontmatter "$profile_file" > "$parsed_file"
+  error_message="$(sed -n 's/^error=//p' "$parsed_file" | head -n 1)"
+  if [ -n "$error_message" ]; then
+    add_warning "건너뜀 $profile_file: $error_message"
+    return 1
+  fi
+  sed -n 's/^warning=//p' "$parsed_file" | while IFS= read -r warning_message; do
+    add_warning "$profile_file: $warning_message"
+  done
+  return 0
+}
+
+read_apply_value() {
+  sed -n 's/^apply=//p' "$1" | tail -n 1
+}
+
+# 매칭 조건이 하나도 없는 프로필은 어떤 레포에도 맞지 않는 설정 오류이므로 경고를 남기고 실패 반환
+check_match_conditions_or_warn() {
+  local profile_file="$1" parsed_file="$2"
+  grep -qE '^(remote|path)=' "$parsed_file" && return 0
+  add_warning "건너뜀 $profile_file: 매칭 조건 없음 (match-remotes, match-paths 모두 비어 있음)"
+  return 1
+}
+
+# 프로필 한 층을 규칙 섹션으로 나눠 병합하고, 규칙이 조용히 빠진 진단을 경고로 옮김
+merge_profile_layer() {
+  local markdown_file="$1" source_label="$2" layer_dir="$3" merged_dir="$4" diagnostic
+  rm -rf "$layer_dir"
+  extract_rule_sections "$markdown_file" "$layer_dir"
+  while IFS= read -r diagnostic; do
+    add_warning "$markdown_file: $diagnostic"
+  done < "$layer_dir/warnings"
+  merge_rule_layer "$layer_dir" "$source_label" "$merged_dir"
+}
+
+# 조직 하나를 매칭하고 적용 값에 따라 분류
+#   auto    $WORK_DIR/auto-orgs 에 "조직<TAB>매칭 근거" 추가
+#   suggest $WORK_DIR/suggest-orgs 에 조직 이름 추가
+# 매칭된 프로젝트 파일 경로는 $WORK_DIR/projects-<조직> 에 이름순으로 기록
+evaluate_org() {
+  local org_profile="$1" manual_mode="$2"
+  local org_dir org_name org_parsed match_reason matched_projects_file
+  local project_file project_name project_parsed project_apply apply_value matched_project_count
+
+  org_dir="$(dirname "$org_profile")"
+  org_name="$(basename "$org_dir")"
+  org_parsed="$WORK_DIR/org-$org_name.parsed"
+  parse_or_warn "$org_profile" "$org_parsed" || return 0
+  check_match_conditions_or_warn "$org_profile" "$org_parsed" || return 0
+  match_reason="$(print_match_reason "$org_parsed" "$WORK_DIR/remotes" "$TARGET_DIR")" || return 0
+
+  matched_projects_file="$WORK_DIR/projects-$org_name"
+  : > "$matched_projects_file"
+  project_apply=""
+  for project_file in "$org_dir"/projects/*.md; do
+    # glob 에 걸린 것이 없을 때만 건너뜀. 디렉터리나 깨진 링크는 파싱 단계에서 경고로 드러남
+    [ -e "$project_file" ] || [ -L "$project_file" ] || continue
+    project_name="$(basename "$project_file" .md)"
+    project_parsed="$WORK_DIR/project-$org_name-$project_name.parsed"
+    parse_or_warn "$project_file" "$project_parsed" || continue
+    check_match_conditions_or_warn "$project_file" "$project_parsed" || continue
+    print_match_reason "$project_parsed" "$WORK_DIR/remotes" "$TARGET_DIR" >/dev/null || continue
+    printf '%s\n' "$project_file" >> "$matched_projects_file"
+    apply_value="$(read_apply_value "$project_parsed")"
+    if [ -n "$apply_value" ]; then
+      project_apply="$apply_value"
+    fi
+  done
+
+  matched_project_count="$(wc -l < "$matched_projects_file" | tr -d ' ')"
+  if [ "$matched_project_count" -ge 2 ]; then
+    add_warning "$org_name: 프로젝트 파일 ${matched_project_count}개가 함께 매칭됨. 이름순으로 모두 적용함"
+  fi
+
+  apply_value="$project_apply"
+  if [ -z "$apply_value" ]; then
+    apply_value="$(read_apply_value "$org_parsed")"
+  fi
+  if [ -z "$apply_value" ] || [ "$manual_mode" = 1 ]; then
+    apply_value="auto"
+  fi
+
+  case "$apply_value" in
+    auto) printf '%s\t%s\n' "$org_name" "$match_reason" >> "$WORK_DIR/auto-orgs" ;;
+    suggest) printf '%s\n' "$org_name" >> "$WORK_DIR/suggest-orgs" ;;
+  esac
+}
+
+# 파일의 줄들을 ", " 로 이어 한 줄로 출력
+join_lines() {
+  awk 'NR > 1 { printf ", " } { printf "%s", $0 } END { if (NR > 0) printf "\n" }' "$1"
+}
+
+print_header() {
+  local org_name="$1" match_reason="$2"
+  local matched_projects_file="$WORK_DIR/projects-$org_name"
+  printf '# brownfield-navigator 가이드\n\n'
+  printf -- '- 조직: %s (근거: %s)\n' "$org_name" "$match_reason"
+  printf -- '- 대상: %s\n' "$TARGET_DIR"
+  if [ -s "$matched_projects_file" ]; then
+    printf -- '- 프로젝트 파일: %s\n' "$(sed 's#^.*/##; s#\.md$##' "$matched_projects_file" | join_lines /dev/stdin)"
+  fi
+  printf '\n'
+  printf '%s\n\n' "기존 코드의 흐름과 조직 컨벤션을 따르는 작업을 위한 기본 가이드다. 사용자가 다른 방식을 원하면 그쪽을 따르고, 가이드와 어긋나는 지점만 한 번 짧게 알린다."
+  printf '%s\n\n' "우선순위: 현재 사용자 지시 > CLAUDE.md > 프로젝트(프로젝트 파일, 프로젝트 메모리) > 개인 > 조직 > 코어. 같은 id의 규칙은 아래에 이미 이 순서로 병합되어 있다."
+  printf '%s\n\n' "(코어) 규칙은 핵심 문단만 담았다. 세부 기준과 이유는 $CORE_SKILL_FILE 의 같은 id 섹션에 있으니 해당 상황에서 필요하면 읽는다."
+}
+
+print_suggestions() {
+  local org_name
+  while IFS= read -r org_name; do
+    printf -- '- %s 가이드를 적용할 수 있음. %s 로 불러오기\n' "$org_name" "$SKILL_COMMAND"
+  done < "$WORK_DIR/suggest-orgs"
+  printf '\n'
+}
+
+print_rule_sections() {
+  local org_name="$1" project_file merged_dir="$WORK_DIR/merged"
+  merge_profile_layer "$CORE_SKILL_FILE" "코어" "$WORK_DIR/layer-core" "$merged_dir"
+  merge_profile_layer "$PROFILE_HOME/orgs/$org_name/profile.md" "조직: $org_name" "$WORK_DIR/layer-org" "$merged_dir"
+  if [ -f "$PROFILE_HOME/personal.md" ]; then
+    merge_profile_layer "$PROFILE_HOME/personal.md" "개인" "$WORK_DIR/layer-personal" "$merged_dir"
+  fi
+  while IFS= read -r project_file; do
+    merge_profile_layer "$project_file" "프로젝트: $(basename "$project_file" .md)" "$WORK_DIR/layer-project" "$merged_dir"
+  done < "$WORK_DIR/projects-$org_name"
+  print_merged_sections "$merged_dir" "코어"
+}
+
+print_references() {
+  local org_name="$1" reference_file description has_reference=0
+  for reference_file in "$PROFILE_HOME/orgs/$org_name"/references/*.md; do
+    [ -f "$reference_file" ] || continue
+    if [ "$has_reference" = 0 ]; then
+      printf '## 참고 파일\n\n관련 작업을 할 때 필요한 파일만 Read한다.\n\n'
+      has_reference=1
+    fi
+    description="$(read_reference_description "$reference_file")"
+    if [ -n "$description" ]; then
+      printf -- '- %s: %s\n' "$reference_file" "$description"
+    else
+      printf -- '- %s\n' "$reference_file"
+    fi
+  done
+  if [ "$has_reference" = 1 ]; then
+    printf '\n'
+  fi
+}
+
+# UTF-8 문자 수. 이어지는 바이트(0x80~0xBF)를 빼고 세므로 로캘과 무관
+count_characters() {
+  LC_ALL=C tr -d '\200-\277' < "$1" | wc -c | tr -d ' '
+}
+
+# 예산을 넘으면 첫 줄 제목 바로 아래에 전체를 읽으라는 안내를 넣어 출력. 안내가 미리보기 안에 들어가야 함
+print_with_budget_notice() {
+  local output_file="$1" character_count
+  character_count="$(count_characters "$output_file")"
+  if [ "$character_count" -le "$GUIDE_CHARACTER_BUDGET" ]; then
+    cat "$output_file"
+    return 0
+  fi
+  sed -n '1p' "$output_file"
+  printf '\n> 이 가이드는 %s자로 훅 출력 한도에 가깝다. 앞부분만 보이고 저장된 파일 경로가 함께 표시되어 있으면, 그 파일을 Read해 전체를 읽고 따른다.\n' "$character_count"
+  sed -n '2,$p' "$output_file"
+}
+
+print_warnings() {
+  local warning_message
+  printf '## brownfield-navigator 경고\n\n'
+  while IFS= read -r warning_message; do
+    printf -- '- %s\n' "$warning_message"
+  done < "$WORK_DIR/warnings"
+}
+
+main() {
+  local manual_mode=0 org_profile selected_org="" selected_reason="" auto_org_count
+
+  if [ "${1:-}" = "--manual" ]; then
+    manual_mode=1
+    shift
+  fi
+  TARGET_DIR="$(cd "${1:-.}" 2>/dev/null && pwd -P)" || return 0
+  [ -d "$PROFILE_HOME/orgs" ] || return 0
+
+  WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/brownfield-navigator.XXXXXX")" || return 0
+  trap 'rm -rf "$WORK_DIR"' EXIT
+  : > "$WORK_DIR/warnings"
+  : > "$WORK_DIR/auto-orgs"
+  : > "$WORK_DIR/suggest-orgs"
+  list_remote_urls "$TARGET_DIR" > "$WORK_DIR/remotes"
+
+  for org_profile in "$PROFILE_HOME"/orgs/*/profile.md; do
+    [ -e "$org_profile" ] || [ -L "$org_profile" ] || continue
+    evaluate_org "$org_profile" "$manual_mode"
+  done
+
+  auto_org_count="$(wc -l < "$WORK_DIR/auto-orgs" | tr -d ' ')"
+  if [ "$auto_org_count" -ge 1 ]; then
+    IFS="$(printf '\t')" read -r selected_org selected_reason < "$WORK_DIR/auto-orgs"
+  fi
+  if [ "$auto_org_count" -ge 2 ]; then
+    add_warning "여러 조직이 매칭됨: $(cut -f1 "$WORK_DIR/auto-orgs" | join_lines /dev/stdin). $selected_org 만 적용함. 매칭 조건을 좁힐 것"
+  fi
+
+  {
+    if [ -n "$selected_org" ]; then
+      print_header "$selected_org" "$selected_reason"
+    elif [ -s "$WORK_DIR/suggest-orgs" ]; then
+      printf '# brownfield-navigator 안내\n\n'
+    fi
+    if [ -s "$WORK_DIR/suggest-orgs" ]; then
+      print_suggestions
+    fi
+    if [ -n "$selected_org" ]; then
+      print_rule_sections "$selected_org"
+      print_references "$selected_org"
+    fi
+    if [ -s "$WORK_DIR/warnings" ]; then
+      print_warnings
+    fi
+  } > "$WORK_DIR/output"
+  print_with_budget_notice "$WORK_DIR/output"
+}
+
+main "$@"
+exit 0

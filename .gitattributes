@@ -1,0 +1,9 @@
+# Windows에서 core.autocrlf로 받아도 bash가 읽는 파일은 LF 줄바꿈을 유지
+# (CRLF면 스크립트가 실행되지 않고, 규칙 제목 끝에 \r이 남음)
+# 훅 스크립트는 Windows 자동 감지를 피하려고 확장자 없는 이름을 쓴다. 새 훅이 추가돼도 덮이도록
+# hooks/ 전체를 지정한다. run-hook.cmd 는 Unix에서 bash가 파싱하는 폴리글롯이라 LF를 유지해야 한다
+plugins/brownfield-navigator/bin/* text eol=lf
+plugins/brownfield-navigator/hooks/** text eol=lf
+plugins/brownfield-navigator/lib/*.sh text eol=lf
+plugins/brownfield-navigator/tests/*.sh text eol=lf
+*.md text eol=lf
