@@ -2217,6 +2217,9 @@ test_templates_compose_without_warnings() {
   assert_contains "$output" "## [commit-by-user] 커밋은 직접 (개인)" "개인 템플릿 규칙 병합"
   assert_contains "$output" "## [tests] 테스트 코드 (프로젝트: your-repo)" "프로젝트 템플릿 규칙 병합"
   assert_contains "$output" "references/topic.md: 이 참고 파일이 담은 내용을 한 줄로" "참고 템플릿 description"
+  assert_occurrence_count "$output" "(조직: sample)" 1 "조직 템플릿의 규칙은 예시 하나뿐"
+  assert_occurrence_count "$output" "(개인)" 1 "개인 템플릿의 규칙은 예시 하나뿐"
+  assert_occurrence_count "$output" "(프로젝트: your-repo)" 1 "프로젝트 템플릿의 규칙은 예시 하나뿐"
 }
 
 run_test test_templates_compose_without_warnings
@@ -2234,12 +2237,14 @@ finish_tests
 
 ````markdown
 ---
-# 적용 강도: auto(규칙 주입) | suggest(한 줄 안내만) | off(주입 안 함)
+# 적용 강도: auto(규칙 주입) | suggest(한 줄 안내만) | off(주입 안 함). 생략하면 auto
 apply: auto
-# git remote URL 패턴 (bash glob). URL 끝의 / 와 .git 은 떼고 비교
+# git remote URL 패턴 (bash glob). URL 끝의 / 와 .git 은 떼고 비교하고, 대소문자를 구분한다
+# 앞의 [:/] 는 owner 앞에 다른 글자가 붙은 이름(not-your-org)까지 맞는 것을 막는다
 match-remotes:
-  - "*your-org/*"
+  - "*[:/]your-org/*"
 # 경로 패턴 (bash glob). 대상 디렉터리나 그 상위 디렉터리와 비교, 앞머리 ~ 는 홈으로 확장
+# 심볼릭 링크를 따라간 실제 경로와 비교한다. 패턴 끝에 / 를 붙이면 아무것도 매칭되지 않는다
 match-paths: []
 ---
 
@@ -2247,10 +2252,11 @@ match-paths: []
 
 위치: `~/.claude/brownfield-navigator/orgs/<조직 이름>/profile.md` (조직 이름은 디렉터리 이름)
 
-- `## [id] 제목` 섹션만 규칙으로 병합된다. id는 소문자, 숫자, `-`만 쓴다
+- `## [id] 제목` 섹션만 규칙으로 병합된다. id는 소문자, 숫자, `-`만 쓰고, 섹션 안의 소제목은 `###` 이하로 쓴다
 - 코어 규칙과 같은 id를 쓰면 그 규칙을 대체하고, 새 id는 뒤에 추가된다
 - 규칙마다 짧은 `**Why:**`를 적으면 Claude가 적용 여부를 스스로 판단할 수 있다
-- 리스트는 블록 형식만 지원한다. `["a", "b"]` 형식은 파싱 실패로 무시된다
+- 리스트는 블록 형식만 지원한다. `["a", "b"]` 형식을 쓰면 이 파일 전체를 건너뛰고 경고를 남긴다
+- 아래 `## [id]` 섹션은 예시다. 자기 규칙으로 바꾸거나 섹션째 지운다. HTML 주석으로 감싸도 규칙으로 읽힌다
 
 ## [commit-message] 커밋 메시지
 
@@ -2267,8 +2273,9 @@ match-paths: []
 ---
 # apply 를 생략하면 조직 프로필의 값을 따른다
 # apply: auto
+# 키와 패턴 규칙은 조직 프로필과 같다. 단, 조직 프로필이 먼저 매칭된 레포에서만 이 파일을 검사한다
 match-remotes:
-  - "*your-org/your-repo"
+  - "*[:/]your-org/your-repo"
 match-paths: []
 ---
 
@@ -2277,6 +2284,9 @@ match-paths: []
 위치: `~/.claude/brownfield-navigator/orgs/<조직 이름>/projects/<프로젝트 이름>.md`
 
 상위 층(코어, 조직, 개인)과 달라지는 규칙, 또는 이 레포에만 항상 적용할 규칙만 둔다. 설정값이나 함정 같은 사실 정보는 Claude Code 프로젝트 메모리에 둔다.
+
+- `## [id] 제목` 섹션만 규칙으로 병합된다. id는 소문자, 숫자, `-`만 쓰고, 섹션 안의 소제목은 `###` 이하로 쓴다
+- 아래 `## [id]` 섹션은 예시다. 자기 규칙으로 바꾸거나 섹션째 지운다. HTML 주석으로 감싸도 규칙으로 읽힌다
 
 ## [tests] 테스트 코드
 
@@ -2296,6 +2306,9 @@ match-paths: []
 
 조직 프로필이 매칭되어 가이드가 병합될 때만 적용된다. Claude와 일하는 방식에 대한 선호를 둔다. frontmatter는 쓰지 않는다.
 
+- `## [id] 제목` 섹션만 규칙으로 병합된다. id는 소문자, 숫자, `-`만 쓰고, 섹션 안의 소제목은 `###` 이하로 쓴다
+- 아래 `## [id]` 섹션은 예시다. 자기 규칙으로 바꾸거나 섹션째 지운다. HTML 주석으로 감싸도 규칙으로 읽힌다
+
 ## [commit-by-user] 커밋은 직접
 
 요청하지 않으면 커밋하지 않는다. 변경을 마치면 변경 파일과 요지만 보고한다.
@@ -2309,14 +2322,14 @@ match-paths: []
 
 ````markdown
 ---
-description: 이 참고 파일이 담은 내용을 한 줄로 (세션에 주입되는 목록에 표시됨)
+description: 이 참고 파일이 담은 내용을 한 줄로
 ---
 
 # 참고 파일
 
 위치: `~/.claude/brownfield-navigator/orgs/<조직 이름>/references/<주제>.md`
 
-세션에는 경로와 description만 주입되고, Claude가 관련 작업을 할 때 이 파일을 읽는다. 여러 레포에 걸친 긴 참고 정보(레포 지도, 외부 규약 등)를 둔다. 본문 형식은 자유다.
+세션에는 경로와 위 description 한 줄만 주입되고, Claude가 관련 작업을 할 때 이 파일을 읽는다. 여러 레포에 걸친 긴 참고 정보(레포 지도, 외부 규약 등)를 둔다. 본문 형식은 자유다.
 ````
 
 - [ ] **Step 7: 테스트를 실행해 통과 확인**
@@ -2419,8 +2432,8 @@ argument-hint: "[조직 이름 또는 메모리 경로]"
 
 1. 층별 초안을 보여준다. 규칙마다 id, 제목, 본문, `**Why:**`, 출처 메모리를 적는다
 2. 매칭 조건을 제안한다
-   - 조직: remote가 있으면 `"*<owner>/*"`, 없으면 `"<공통 상위 경로>/*"` (홈 아래면 `~/`로 시작)
-   - 프로젝트: remote가 있으면 `"*<owner>/<레포 이름>"`, 없으면 레포 경로
+   - 조직: remote가 있으면 `"*[:/]<owner>/*"`, 없으면 `"<공통 상위 경로>/*"` (홈 아래면 `~/`로 시작)
+   - 프로젝트: remote가 있으면 `"*[:/]<owner>/<레포 이름>"`, 없으면 레포 경로
 3. 사용자 승인을 받는다. 승인 전에는 파일을 쓰지 않는다
 4. `templates/`의 형식대로 파일을 쓴다
    - frontmatter 리스트는 블록 형식(`  - "패턴"`)만 쓴다. `["패턴"]` 형식은 파싱 실패로 무시된다
@@ -2523,7 +2536,7 @@ EOF
 ---
 apply: auto
 match-remotes:
-  - "*your-org/*"
+  - "*[:/]your-org/*"
 match-paths:
   - "~/work/your-org/*"
 ---
@@ -2536,9 +2549,9 @@ match-paths:
 ```
 
 - `apply`: `auto`(규칙 주입), `suggest`(한 줄 안내만), `off`(주입 안 함). 생략하면 `auto`이고, 프로젝트 파일에서 생략하면 조직 값을 따릅니다
-- `match-remotes`: git remote URL과 비교하는 bash glob입니다. URL 끝의 `/`와 `.git`, `https://user:token@host` 형식의 인증 정보는 떼고 비교합니다
+- `match-remotes`: git remote URL과 비교하는 bash glob입니다. URL 끝의 `/`와 `.git`, `https://user:token@host` 형식의 인증 정보는 떼고 비교하고, 대소문자를 구분합니다. `*your-org/*`는 `not-your-org`에도 맞으므로, 예시처럼 앞에 `[:/]`를 두어 owner 경계를 고정합니다
 - `match-paths`: 작업 디렉터리나 그 상위 디렉터리와 비교하는 bash glob입니다. 앞머리 `~`는 홈으로 확장하고, 심볼릭 링크를 따라간 실제 경로와 비교합니다. 비교는 바이트 단위라 `?`와 `[...]`는 한글 한 글자에 맞지 않으니 한글이 들어간 자리에는 `*`를 씁니다. git을 쓰지 않는다면 이 조건을 씁니다
-- 리스트는 블록 형식만 지원합니다. `["a", "b"]` 형식은 파싱 실패로 무시되고 경고가 남습니다
+- 리스트는 블록 형식만 지원합니다. `["a", "b"]` 형식을 쓰면 그 파일 전체를 건너뛰고 경고가 남습니다
 - 조직 이름은 `orgs/` 아래 디렉터리 이름, 프로젝트 이름은 파일 이름입니다
 
 ### 규칙 섹션
@@ -2647,7 +2660,7 @@ To write profiles by hand, copy and edit the files in `plugins/brownfield-naviga
 ---
 apply: auto
 match-remotes:
-  - "*your-org/*"
+  - "*[:/]your-org/*"
 match-paths:
   - "~/work/your-org/*"
 ---
@@ -2660,7 +2673,7 @@ Write commit messages as `type: description TICKET-123`.
 ```
 
 - `apply`: `auto` (inject rules), `suggest` (one-line hint only), or `off` (inject nothing). It defaults to `auto`, and a project file without it uses the organization's value
-- `match-remotes`: bash globs compared with git remote URLs. A trailing `/`, a trailing `.git`, and credentials such as `https://user:token@host` are removed before comparing
+- `match-remotes`: bash globs compared with git remote URLs. A trailing `/`, a trailing `.git`, and credentials such as `https://user:token@host` are removed before comparing, and the comparison is case-sensitive. `*your-org/*` also matches `not-your-org`, so put `[:/]` in front as in the example to pin the owner boundary
 - `match-paths`: bash globs compared with the working directory or any of its parent directories. A leading `~` expands to your home directory, and the comparison uses the real path with symbolic links resolved. Matching is byte-wise, so `?` and `[...]` do not match a single non-ASCII character such as a Korean syllable; use `*` there. Use this condition if you don't use git
 - Lists must use block style. Flow style such as `["a", "b"]` fails to parse, and the file is skipped with a warning
 - The organization name is the directory name under `orgs/`, and the project name is the file name
@@ -2774,7 +2787,7 @@ spec 14장 확인 결과: claude-sync의 동기화 대상은 `~/.claude/agents/`
 ---
 apply: auto
 match-remotes:
-  - "*pnpt-ds/*"
+  - "*[:/]pnpt-ds/*"
 match-paths: []
 ---
 
@@ -2987,7 +3000,7 @@ taap의 `src/components/WebViewCommon.tsx`가 주입하는 `PageHistoryInjectCod
 ````markdown
 ---
 match-remotes:
-  - "*pnpt-ds/fez-front-ctrl-central"
+  - "*[:/]pnpt-ds/fez-front-ctrl-central"
 ---
 
 # fez-front-ctrl-central
@@ -3006,7 +3019,7 @@ match-remotes:
 ````markdown
 ---
 match-remotes:
-  - "*pnpt-ds/fez-front-taap"
+  - "*[:/]pnpt-ds/fez-front-taap"
 ---
 
 # fez-front-taap
@@ -3031,7 +3044,7 @@ match-remotes:
 ````markdown
 ---
 match-remotes:
-  - "*pnpt-ds/omar-front-ctrl-room"
+  - "*[:/]pnpt-ds/omar-front-ctrl-room"
 ---
 
 # omar-front-ctrl-room
@@ -3076,7 +3089,7 @@ match-remotes:
 ````markdown
 ---
 match-remotes:
-  - "*pnpt-ds/front-space-petco"
+  - "*[:/]pnpt-ds/front-space-petco"
 ---
 
 # front-space-petco
