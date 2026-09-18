@@ -2244,7 +2244,8 @@ apply: auto
 match-remotes:
   - "*[:/]your-org/*"
 # 경로 패턴 (bash glob). 대상 디렉터리나 그 상위 디렉터리와 비교, 앞머리 ~ 는 홈으로 확장
-# 심볼릭 링크를 따라간 실제 경로와 비교한다. 패턴 끝에 / 를 붙이면 아무것도 매칭되지 않는다
+# 대상 경로는 심볼릭 링크를 따라간 실제 경로다. 홈을 포함해 경로 중간에 링크가 있으면 ~ 대신 실제 경로를 쓴다
+# 디렉터리 패턴 끝에 / 를 붙이면 매칭되지 않는다
 match-paths: []
 ---
 
@@ -2550,7 +2551,7 @@ match-paths:
 
 - `apply`: `auto`(규칙 주입), `suggest`(한 줄 안내만), `off`(주입 안 함). 생략하면 `auto`이고, 프로젝트 파일에서 생략하면 조직 값을 따릅니다
 - `match-remotes`: git remote URL과 비교하는 bash glob입니다. URL 끝의 `/`와 `.git`, `https://user:token@host` 형식의 인증 정보는 떼고 비교하고, 대소문자를 구분합니다. `*your-org/*`는 `not-your-org`에도 맞으므로, 예시처럼 앞에 `[:/]`를 두어 owner 경계를 고정합니다
-- `match-paths`: 작업 디렉터리나 그 상위 디렉터리와 비교하는 bash glob입니다. 앞머리 `~`는 홈으로 확장하고, 심볼릭 링크를 따라간 실제 경로와 비교합니다. 비교는 바이트 단위라 `?`와 `[...]`는 한글 한 글자에 맞지 않으니 한글이 들어간 자리에는 `*`를 씁니다. git을 쓰지 않는다면 이 조건을 씁니다
+- `match-paths`: 작업 디렉터리나 그 상위 디렉터리와 비교하는 bash glob입니다. 앞머리 `~`는 홈으로 확장하고, 대상 경로는 심볼릭 링크를 따라간 실제 경로입니다. 홈을 포함해 경로 중간에 링크가 있으면 `~` 대신 실제 경로를 씁니다. 비교는 바이트 단위라 `?`와 `[...]`는 한글 한 글자에 맞지 않으니 한글이 들어간 자리에는 `*`를 씁니다. git을 쓰지 않는다면 이 조건을 씁니다
 - 리스트는 블록 형식만 지원합니다. `["a", "b"]` 형식을 쓰면 그 파일 전체를 건너뛰고 경고가 남습니다
 - 조직 이름은 `orgs/` 아래 디렉터리 이름, 프로젝트 이름은 파일 이름입니다
 
@@ -2674,7 +2675,7 @@ Write commit messages as `type: description TICKET-123`.
 
 - `apply`: `auto` (inject rules), `suggest` (one-line hint only), or `off` (inject nothing). It defaults to `auto`, and a project file without it uses the organization's value
 - `match-remotes`: bash globs compared with git remote URLs. A trailing `/`, a trailing `.git`, and credentials such as `https://user:token@host` are removed before comparing, and the comparison is case-sensitive. `*your-org/*` also matches `not-your-org`, so put `[:/]` in front as in the example to pin the owner boundary
-- `match-paths`: bash globs compared with the working directory or any of its parent directories. A leading `~` expands to your home directory, and the comparison uses the real path with symbolic links resolved. Matching is byte-wise, so `?` and `[...]` do not match a single non-ASCII character such as a Korean syllable; use `*` there. Use this condition if you don't use git
+- `match-paths`: bash globs compared with the working directory or any of its parent directories. A leading `~` expands to your home directory, and the target path is the real path with symbolic links resolved. If any part of the path is a symlink, including your home directory itself, write the real path instead of `~`. Matching is byte-wise, so `?` and `[...]` do not match a single non-ASCII character such as a Korean syllable; use `*` there. Use this condition if you don't use git
 - Lists must use block style. Flow style such as `["a", "b"]` fails to parse, and the file is skipped with a warning
 - The organization name is the directory name under `orgs/`, and the project name is the file name
 

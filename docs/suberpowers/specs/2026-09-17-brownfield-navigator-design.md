@@ -139,7 +139,7 @@ match-paths: []
 
 - 프로젝트 이름은 파일 이름에서 `.md`를 뗀 것이다
 - `apply`를 생략하면 조직 값을 따른다
-- remote URL은 정규화한 뒤 비교하므로 `*pnpt-ds/fez-front-taap`처럼 레포 이름까지 정확히 쓸 수 있다
+- remote URL은 정규화한 뒤 비교하므로 `*[:/]pnpt-ds/fez-front-taap`처럼 레포 이름까지 정확히 쓸 수 있다
 
 ### 4.4 개인 프로필
 
@@ -337,10 +337,10 @@ match-paths: []
 
 | 파일 | match-remotes 패턴 | 섹션 |
 |---|---|---|
-| `fez-front-ctrl-central.md` | `*pnpt-ds/fez-front-ctrl-central` | `[tests]` 테스트 파일을 만들지 않음. `tsc --noEmit`과 CRA 빌드로만 검증 |
-| `fez-front-taap.md` | `*pnpt-ds/fez-front-taap` | `[tests]` 테스트를 유지하지 않음. `npx tsc --noEmit`과 prettier로 검증, 동작은 기기에서 확인. `[workflow-docs]` 커밋하지 않고 구현이 끝나면 삭제 |
-| `omar-front-ctrl-room.md` | `*pnpt-ds/omar-front-ctrl-room` | `[tests]` 검증용으로 작성·실행하되 커밋하지 않음(`.git/info/exclude`). `[comment-style]` 짧으면 명사형, 설명이 필요하면 평서형, 한 문장에 하나, 코드나 표가 말하는 내용 반복 금지. `[simple-git-guidance]` 안내하는 git 명령은 가장 단순한 안부터, 손으로 파일 옮기는 단계 금지, 이력 재작성은 복제본에서 끝까지 실행해 본 뒤 안내 |
-| `front-space-petco.md` | `*pnpt-ds/front-space-petco` | `[capture-location]` 화면 캡처는 `~/Desktop/test screen/<티켓번호>/`, 데이터가 없으면 mock으로 상황을 만들어 캡처 |
+| `fez-front-ctrl-central.md` | `*[:/]pnpt-ds/fez-front-ctrl-central` | `[tests]` 테스트 파일을 만들지 않음. `tsc --noEmit`과 CRA 빌드로만 검증 |
+| `fez-front-taap.md` | `*[:/]pnpt-ds/fez-front-taap` | `[tests]` 테스트를 유지하지 않음. `npx tsc --noEmit`과 prettier로 검증, 동작은 기기에서 확인. `[workflow-docs]` 커밋하지 않고 구현이 끝나면 삭제 |
+| `omar-front-ctrl-room.md` | `*[:/]pnpt-ds/omar-front-ctrl-room` | `[tests]` 검증용으로 작성·실행하되 커밋하지 않음(`.git/info/exclude`). `[comment-style]` 짧으면 명사형, 설명이 필요하면 평서형, 한 문장에 하나, 코드나 표가 말하는 내용 반복 금지. `[simple-git-guidance]` 안내하는 git 명령은 가장 단순한 안부터, 손으로 파일 옮기는 단계 금지, 이력 재작성은 복제본에서 끝까지 실행해 본 뒤 안내 |
+| `front-space-petco.md` | `*[:/]pnpt-ds/front-space-petco` | `[capture-location]` 화면 캡처는 `~/Desktop/test screen/<티켓번호>/`, 데이터가 없으면 mock으로 상황을 만들어 캡처 |
 
 court, stpm은 달라지는 규칙이 없어 파일을 만들지 않는다.
 
