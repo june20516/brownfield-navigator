@@ -1,0 +1,7 @@
+# Windows에서 core.autocrlf로 받아도 bash가 읽는 파일은 LF 줄바꿈을 유지
+# (CRLF면 스크립트가 실행되지 않고, 규칙 제목 끝에 \r이 남음)
+plugins/brownfield-navigator/bin/* text eol=lf
+plugins/brownfield-navigator/hooks/session-start text eol=lf
+plugins/brownfield-navigator/lib/*.sh text eol=lf
+plugins/brownfield-navigator/tests/*.sh text eol=lf
+*.md text eol=lf
