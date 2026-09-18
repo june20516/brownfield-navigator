@@ -2528,15 +2528,25 @@ EOF
 
 ## 처음 설정
 
-프로젝트 메모리가 쌓여 있다면 수집 스킬로 프로필 초안을 만듭니다.
+수집 스킬을 호출합니다.
 
 ```
 /brownfield-navigator:harvest-profile
 ```
 
-메모리를 모아 조직 후보를 보여주고, 분류와 충돌 정리를 거쳐 승인한 내용만 파일로 씁니다. 메모리는 삭제하거나 수정하지 않습니다.
+프로젝트 메모리가 쌓여 있으면 그 내용을 모아 조직 후보를 보여주고, 분류와 충돌 정리를 거쳐 초안을 만듭니다. 메모리가 없으면 조직 이름과 레포 경로를 물어 매칭 조건만 담은 최소 프로필을 만듭니다. 어느 쪽이든 승인한 내용만 파일로 쓰고, 메모리는 삭제하거나 수정하지 않습니다.
 
-직접 작성하려면 `plugins/brownfield-navigator/templates/`의 파일을 복사해 고칩니다.
+형식을 보고 직접 쓰고 싶다면 아래 [프로필 형식](#프로필-형식)의 예시를 옮겨 써도 됩니다.
+
+## 동작 확인
+
+훅은 세션이 시작될 때만 실행됩니다. 그래서 프로필을 만들거나 고친 뒤에는 새 세션을 시작하거나 `/clear` 해야 반영됩니다.
+
+가이드는 Claude의 컨텍스트로만 들어가고 화면에는 보이지 않습니다. 잘 들어갔는지 보려면 대상 레포에서 세션을 시작한 뒤 스킬을 호출합니다. 어느 조직의 가이드를 적용하는지, 프로필을 읽다 생긴 경고가 있는지 Claude가 알려 줍니다.
+
+```
+/brownfield-navigator:brownfield-navigator
+```
 
 ## 프로필 형식
 
@@ -2560,14 +2570,15 @@ match-paths:
 
 - `apply`: `auto`(규칙 주입), `suggest`(한 줄 안내만), `off`(주입 안 함). 생략하면 `auto`이고, 프로젝트 파일에서 생략하면 조직 값을 따릅니다
 - `match-remotes`: git remote URL과 비교하는 bash glob입니다. URL 끝의 `/`와 `.git`, `https://user:token@host` 형식의 인증 정보는 떼고 비교하고, 대소문자를 구분합니다. `*your-org/*`는 `not-your-org`에도 맞으므로, 예시처럼 앞에 `[:/]`를 두어 owner 경계를 고정합니다
-- `match-paths`: 작업 디렉터리나 그 상위 디렉터리와 비교하는 bash glob입니다. 앞머리 `~`는 홈으로 확장하고, 대상 경로는 심볼릭 링크를 따라간 실제 경로입니다. 홈을 포함해 경로 중간에 링크가 있으면 `~` 대신 실제 경로를 씁니다. 비교는 바이트 단위라 `?`와 `[...]`는 한글 한 글자에 맞지 않으니 한글이 들어간 자리에는 `*`를 씁니다. git을 쓰지 않는다면 이 조건을 씁니다
-- 리스트는 블록 형식만 지원합니다. `["a", "b"]` 형식을 쓰면 그 파일 전체를 건너뛰고 경고가 남습니다
-- 조직 이름은 `orgs/` 아래 디렉터리 이름, 프로젝트 이름은 파일 이름입니다
+- `match-paths`: 작업 디렉터리나 그 상위 디렉터리와 비교하는 bash glob입니다. 앞머리 `~`는 홈으로 확장하고, 대상 경로는 심볼릭 링크를 따라간 실제 경로입니다. 홈을 포함해 경로 중간에 링크가 있으면 `~` 대신 실제 경로를 씁니다. 비교는 바이트 단위라 `?`와 `[...]`는 한글처럼 ASCII가 아닌 문자 한 글자에 맞지 않으니 그 자리에는 `*`를 씁니다. 디렉터리 패턴 끝에 `/`를 붙이면 매칭되지 않습니다(`"~/work/your-org/"`가 아니라 `"~/work/your-org/*"`). git을 쓰지 않는다면 이 조건을 씁니다
+- 두 키의 패턴 중 **하나라도** 맞으면 매칭입니다. 둘을 모두 만족해야 하는 방식은 지원하지 않으므로, 범위를 좁히려면 패턴 자체를 좁힙니다
+- 리스트는 블록 형식만 지원합니다. `["a", "b"]` 형식을 쓰면 그 파일 전체를 건너뛰고 경고가 남습니다. 한쪽 조건만 쓸 때 다른 키는 값을 비워 두지 말고 `match-paths: []`처럼 빈 리스트로 적습니다. 값 없이 두면 역시 파일 전체를 건너뜁니다
+- 조직 이름은 `orgs/` 아래 디렉터리 이름, 프로젝트 이름은 파일 이름입니다. 프로젝트 파일은 조직 프로필이 먼저 매칭된 레포에서만 검사합니다
 
 ### 규칙 섹션
 
-- `## [id] 제목`부터 다음 `## ` 헤딩 전까지가 규칙 하나입니다. id는 소문자, 숫자, `-`만 씁니다
-- 같은 id는 대체, 새 id는 추가입니다. 코어 규칙의 id는 `skills/brownfield-navigator/SKILL.md`에서 확인합니다
+- `## [id] 제목`부터 다음 `## ` 헤딩 전까지가 규칙 하나입니다. id는 소문자, 숫자, `-`만 씁니다. 코드 블록 안의 `## ` 줄은 헤딩으로 세지 않으므로, 규칙 본문에 마크다운 예시를 넣어도 섹션이 쪼개지지 않습니다
+- 같은 id는 대체, 새 id는 추가입니다. 코어 규칙의 id는 `guide-stance`, `workflow-skill-conflict`, `delegate-with-guide`, `actual-tooling`, `existing-pattern-first`, `existing-vocabulary`, `comment-density`, `preserve-vs-decide`, `stage-boundary`, `ideal-vs-current`, `respect-user-edits`, `verify-premise`, `structural-evidence`, `doc-conflict`, `spec-import`, `team-boundary` 열여섯 개입니다. 병합된 가이드에서는 섹션 제목 끝에 `(코어)`, `(조직: your-org)`처럼 최종 출처가 붙습니다
 - id가 없는 `## ` 섹션은 설명으로 보고 병합하지 않습니다
 - 규칙을 끄려면 섹션을 지웁니다. HTML 주석(`<!-- -->`)으로 감싸도 규칙으로 읽힙니다
 
@@ -2581,24 +2592,32 @@ match-paths:
 
 ## 수동으로 불러오기
 
-여러 레포를 오가는 디렉터리에서 세션을 시작했거나 `apply: suggest`인 레포에서 가이드를 쓰려면 호출합니다.
+여러 레포를 오가는 디렉터리에서 세션을 시작했거나, `apply`가 `suggest` 또는 `off`인 레포에서 가이드를 쓰려면 호출합니다. 수동 호출은 `off`로 꺼 둔 설정까지 되살리므로, Claude는 사용자가 요청했을 때만 그렇게 동작합니다.
 
 ```
 /brownfield-navigator:brownfield-navigator
 ```
 
-어떤 규칙이 적용되는지 보려면 세션에서 이 스킬로 가이드를 불러 달라고 하면 됩니다. Claude가 병합 결과와 경고를 보여 줍니다. 이 레포를 받아 두었다면 스크립트를 직접 실행해도 됩니다.
+이 레포를 받아 두었다면 스크립트를 직접 실행해도 됩니다.
 
 ```bash
 plugins/brownfield-navigator/bin/compose-guide --manual ~/work/your-org/your-repo
 ```
+
+## 가이드가 나오지 않을 때
+
+1. 대상 레포에서 세션을 시작한 뒤 `/brownfield-navigator:brownfield-navigator`를 호출합니다. 매칭되는 프로필이 없으면 없다고 알려 주고, 프로필을 읽다 실패했으면 그 경고를 보여 줍니다
+2. 매칭 조건을 봅니다. `match-remotes`와 `match-paths`에 패턴이 **하나도 없는** 프로필은 어디에도 매칭되지 않고, 이때는 경고도 나오지 않습니다. 경로 패턴 끝에 `/`가 붙은 경우도 마찬가지로 조용히 실패합니다
+3. `match-paths`는 심볼릭 링크를 따라간 실제 경로와 비교합니다. 대상 레포에서 `pwd -P`로 실제 경로를 확인해 패턴과 맞춰 보세요
+4. frontmatter의 키 이름을 봅니다. 지원하지 않는 키는 무시하고 경고를 남기므로, `match-remote`처럼 오타가 난 키는 1번에서 경고로 드러납니다
 
 ## 주의
 
 - 프로필은 `~/.claude/brownfield-navigator/`에 있는 사용자 파일입니다. 플러그인을 업데이트해도 지워지지 않지만, 다른 기기에서 쓰려면 따로 백업하거나 동기화해야 합니다. 위치는 환경변수 `BROWNFIELD_NAVIGATOR_HOME`으로 바꿀 수 있습니다
 - 서브에이전트는 세션 시작 주입을 받지 않습니다. 코어 규칙 `[delegate-with-guide]`에 따라 Claude가 관련 규칙을 위임 프롬프트에 함께 적습니다
 - 한 레포에 `auto` 조직이 둘 이상 매칭되면 이름순 첫 조직만 적용하고 경고합니다
-- Claude Code는 훅 출력을 10,000자로 제한합니다. 그래서 세션에 주입하는 가이드에는 코어 규칙의 핵심 문단만 넣고(전문은 SKILL.md), 조직·개인·프로젝트 규칙은 전문을 넣습니다. 합쳐서 9,000자를 넘으면 가이드 맨 위에 저장된 전체 파일을 읽으라는 안내가 붙습니다. 조직 규칙이 길어지면 긴 설명은 참고 파일(`references/`)로 옮기세요
+- 한 조직에서 프로젝트 파일이 둘 이상 매칭되면 조직과 달리 하나를 고르지 않고 이름순으로 모두 병합하며, 경고합니다. `apply`는 값을 가진 마지막 파일의 값을 쓰므로, 파일 하나를 더했을 뿐인데 적용 강도가 바뀔 수 있습니다
+- Claude Code는 훅 출력을 10,000자로 제한합니다. 그래서 세션에 주입하는 가이드에는 코어 규칙의 핵심 문단만 넣고(전문은 SKILL.md), 조직·개인·프로젝트 규칙은 전문을 넣습니다. 합쳐서 9,000자를 넘으면 제목 바로 아래에 "잘린 뒤에도 전체를 읽을 수 있으면 읽으라"는 조건부 안내가 붙지만, 잘린 출력이 파일로 남는지는 Claude Code에 달려 있으므로 9,000자 아래로 유지하는 편이 안전합니다. 조직 규칙이 길어지면 긴 설명은 참고 파일(`references/`)로 옮기세요
 
 ## 개발
 
@@ -2607,6 +2626,8 @@ bash plugins/brownfield-navigator/tests/run-all.sh
 claude plugin validate plugins/brownfield-navigator
 claude --plugin-dir plugins/brownfield-navigator
 ```
+
+코어 규칙을 더하거나 id를 바꿨다면 두 README의 id 목록도 함께 고칩니다.
 ````
 
 - [ ] **Step 2: 영어 README 작성**
@@ -2622,7 +2643,7 @@ A Claude Code plugin for people who want Claude to **follow their company's conv
 
 Organize the guidance scattered across your project memories into organization, personal, and project profiles. When a session starts, the plugin merges the guide that matches the working directory and injects it. In places that match no profile, such as personal projects, it does nothing.
 
-It is a guide, not an enforcement mechanism. If you want a different approach, Claude follows you.
+It is a guide, not an enforcement mechanism. If you want a different approach, Claude follows your lead.
 
 The bundled core rules and templates are written in Korean. Rules are plain Markdown sections, so you can write your own profiles in any language.
 
@@ -2639,7 +2660,7 @@ The bundled core rules and templates are written in Korean. Rules are plain Mark
 2. On a match, it merges `## [id] title` sections in the order core, organization, personal, project. A later layer replaces a section with the same id
 3. The merged guide and a list of reference files are added to the session context
 
-Keep project-specific facts, such as configuration values and pitfalls, in Claude Code project memory as before.
+Keep project-specific facts, such as configuration values and pitfalls, in Claude Code project memory, where you keep them today.
 
 ## Installation
 
@@ -2652,15 +2673,25 @@ Requirements: Claude Code and bash 3.2 or later. git is needed only for remote c
 
 ## First-time setup
 
-If you have accumulated project memories, draft your profiles with the harvest skill.
+Invoke the harvest skill.
 
 ```
 /brownfield-navigator:harvest-profile
 ```
 
-It collects your memories, shows organization candidates, walks through classification and conflict resolution, and writes only what you approve. It never deletes or edits your memories.
+If you have accumulated project memories, it collects them, shows organization candidates, walks through classification and conflict resolution, and drafts your profiles. If you have no memories, it asks for an organization name and a repository path and creates a minimal profile that holds just the match conditions. Either way, it writes only what you approve, and it never deletes or edits your memories.
 
-To write profiles by hand, copy and edit the files in `plugins/brownfield-navigator/templates/`.
+If you would rather write a profile by hand, copy the example in [Profile format](#profile-format) below.
+
+## Verifying it works
+
+The hook runs only when a session starts. So after you create or edit a profile, start a new session or run `/clear` before it takes effect.
+
+The guide goes into Claude's context only; nothing appears on your screen. To check that it arrived, start a session in the target repository and invoke the skill. Claude tells you which organization's guide is in effect and reports any warnings raised while reading your profiles.
+
+```
+/brownfield-navigator:brownfield-navigator
+```
 
 ## Profile format
 
@@ -2684,14 +2715,15 @@ Write commit messages as `type: description TICKET-123`.
 
 - `apply`: `auto` (inject rules), `suggest` (one-line hint only), or `off` (inject nothing). It defaults to `auto`, and a project file without it uses the organization's value
 - `match-remotes`: bash globs compared with git remote URLs. A trailing `/`, a trailing `.git`, and credentials such as `https://user:token@host` are removed before comparing, and the comparison is case-sensitive. `*your-org/*` also matches `not-your-org`, so put `[:/]` in front as in the example to pin the owner boundary
-- `match-paths`: bash globs compared with the working directory or any of its parent directories. A leading `~` expands to your home directory, and the target path is the real path with symbolic links resolved. If any part of the path is a symlink, including your home directory itself, write the real path instead of `~`. Matching is byte-wise, so `?` and `[...]` do not match a single non-ASCII character such as a Korean syllable; use `*` there. Use this condition if you don't use git
-- Lists must use block style. Flow style such as `["a", "b"]` fails to parse, and the file is skipped with a warning
-- The organization name is the directory name under `orgs/`, and the project name is the file name
+- `match-paths`: bash globs compared with the working directory or any of its parent directories. A leading `~` expands to your home directory, and the target path is the real path with symbolic links resolved. If any part of the path is a symlink, including your home directory itself, write the real path instead of `~`. Matching is byte-wise, so `?` and `[...]` do not match a single non-ASCII character such as a Korean syllable; use `*` there. A directory pattern with a trailing `/` never matches (`"~/work/your-org/*"`, not `"~/work/your-org/"`). Use this condition if you don't use git
+- A profile matches if **any** one pattern in either list matches; the two keys are not combined with AND. To narrow the scope, narrow the patterns themselves
+- Lists must use block style. Flow style such as `["a", "b"]` fails to parse, and the file is skipped with a warning. When you use only one of the two keys, write the other as an empty list, `match-paths: []`, rather than leaving it without a value; a key left empty also skips the whole file
+- The organization name is the directory name under `orgs/`, and the project name is the file name. Project files are examined only in repositories where an organization profile matched first
 
 ### Rule sections
 
-- A rule runs from `## [id] title` to the next `## ` heading. Ids use lowercase letters, digits, and `-`
-- A section with the same id replaces the earlier one, and a new id is added. The core rule ids are in `skills/brownfield-navigator/SKILL.md`
+- A rule runs from `## [id] title` to the next `## ` heading. Ids use lowercase letters, digits, and `-`. A `## ` line inside a fenced code block does not count as a heading, so a Markdown example inside a rule won't split the section
+- A section with the same id replaces the earlier one, and a new id is added. There are sixteen core rule ids: `guide-stance`, `workflow-skill-conflict`, `delegate-with-guide`, `actual-tooling`, `existing-pattern-first`, `existing-vocabulary`, `comment-density`, `preserve-vs-decide`, `stage-boundary`, `ideal-vs-current`, `respect-user-edits`, `verify-premise`, `structural-evidence`, `doc-conflict`, `spec-import`, `team-boundary`. In the merged guide, each section title ends with its final source, such as `(코어)` for core or `(조직: your-org)` for an organization
 - `## ` sections without an id are treated as descriptions and are not merged
 - To turn a rule off, delete its section. Wrapping it in an HTML comment (`<!-- -->`) does not disable it
 
@@ -2705,24 +2737,32 @@ Put a one-line `description:` in the frontmatter of `orgs/<org>/references/<topi
 
 ## Loading the guide manually
 
-Invoke the skill if you started the session in a directory that spans several repositories, or if you want the guide in a repository set to `apply: suggest`.
+Invoke the skill if you started the session in a directory that contains several repositories, or if you want the guide in a repository whose `apply` is `suggest` or `off`. A manual load revives settings you turned off with `off`, so Claude does this only when you ask for it.
 
 ```
 /brownfield-navigator:brownfield-navigator
 ```
 
-To see which rules apply, ask Claude in a session to load the guide with this skill; it shows the merged result and any warnings. If you have cloned this repository, you can also run the script directly.
+If you have cloned this repository, you can also run the script directly.
 
 ```bash
 plugins/brownfield-navigator/bin/compose-guide --manual ~/work/your-org/your-repo
 ```
+
+## When no guide appears
+
+1. Start a session in the target repository and invoke `/brownfield-navigator:brownfield-navigator`. If no profile matches, Claude says so, and if a profile failed to parse, it shows that warning
+2. Check the match conditions. A profile with **no** patterns at all in `match-remotes` and `match-paths` matches nothing, and no warning is raised. A path pattern with a trailing `/` fails just as quietly
+3. `match-paths` is compared with the real path, with symbolic links resolved. Run `pwd -P` in the target repository and check it against your pattern
+4. Check your frontmatter key names. Unsupported keys are ignored with a warning, so a typo such as `match-remote` shows up as a warning in step 1
 
 ## Notes
 
 - Profiles are your own files in `~/.claude/brownfield-navigator/`. Plugin updates don't remove them, but to use them on another machine you need to back them up or sync them yourself. Set the `BROWNFIELD_NAVIGATOR_HOME` environment variable to use a different location
 - Subagents don't receive the session-start injection. Following the core rule `[delegate-with-guide]`, Claude includes the relevant rules in its delegation prompts
 - If two or more `auto` organizations match one repository, only the first one by name is applied, with a warning
-- Claude Code caps hook output at 10,000 characters. The injected guide therefore contains only the key paragraph of each core rule (the full text stays in SKILL.md) and the full text of organization, personal, and project rules. If the total exceeds 9,000 characters, a notice at the top of the guide tells Claude to read the saved full file. When organization rules grow long, move the detailed explanations into reference files (`references/`)
+- If two or more project files in one organization match, they are not narrowed down to one the way organizations are: all of them are merged in name order, with a warning. The `apply` value comes from the last file that sets one, so adding a single file can change how the guide is applied
+- Claude Code caps hook output at 10,000 characters. The injected guide therefore contains only the key paragraph of each core rule (the full text stays in SKILL.md) and the full text of organization, personal, and project rules. If the total exceeds 9,000 characters, a conditional notice right under the title tells Claude to read the full text if it is still reachable after truncation — but whether the truncated output is saved to a file is up to Claude Code, so staying under 9,000 characters is the safe course. When organization rules grow long, move the detailed explanations into reference files (`references/`)
 
 ## Development
 
@@ -2731,6 +2771,8 @@ bash plugins/brownfield-navigator/tests/run-all.sh
 claude plugin validate plugins/brownfield-navigator
 claude --plugin-dir plugins/brownfield-navigator
 ```
+
+If you add a core rule or rename an id, update the id list in both READMEs as well.
 ````
 
 - [ ] **Step 3: 줄바꿈 속성 작성**
@@ -2742,8 +2784,11 @@ Windows에서 `core.autocrlf`로 받아도 bash가 읽는 파일이 CRLF로 바�
 ````gitattributes
 # Windows에서 core.autocrlf로 받아도 bash가 읽는 파일은 LF 줄바꿈을 유지
 # (CRLF면 스크립트가 실행되지 않고, 규칙 제목 끝에 \r이 남음)
+# 훅 스크립트는 Windows 자동 감지를 피하려고 확장자 없는 이름을 쓴다. 새 훅이 추가돼도 덮이도록
+# hooks/ 전체를 지정하고, Windows에서 cmd.exe가 실행해야 하는 .cmd 만 git 기본값(autocrlf)에 맡김
 plugins/brownfield-navigator/bin/* text eol=lf
-plugins/brownfield-navigator/hooks/session-start text eol=lf
+plugins/brownfield-navigator/hooks/* text eol=lf
+plugins/brownfield-navigator/hooks/*.cmd !text !eol
 plugins/brownfield-navigator/lib/*.sh text eol=lf
 plugins/brownfield-navigator/tests/*.sh text eol=lf
 *.md text eol=lf
