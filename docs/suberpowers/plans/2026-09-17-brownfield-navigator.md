@@ -17,7 +17,7 @@
 - 모든 명령은 레포 루트 `~/personal/brownfield-navigator`에서 실행한다
 - 스크립트와 테스트는 bash 3.2에서 동작해야 한다. 연관 배열(`declare -A`), `mapfile`, `${var,,}`를 쓰지 않고, 픽스처는 heredoc 대신 `printf`로 만든다
 - macOS의 `bash`는 `/bin/bash` 3.2다. 테스트는 `bash plugins/brownfield-navigator/tests/<이름>.test.sh`, 전체는 `bash plugins/brownfield-navigator/tests/run-all.sh`로 실행한다
-- 파일 내용은 이 계획의 코드 블록과 **정확히 같게** 쓴다. 모든 코드 블록은 스크래치 시제품에서 bash 3.2로 전체 테스트(52개)와 `claude plugin validate` 통과를 확인한 내용이다
+- 파일 내용은 이 계획의 코드 블록과 **정확히 같게** 쓴다. 모든 코드 블록은 스크래치 시제품에서 bash 3.2로 전체 테스트(53개)와 `claude plugin validate` 통과를 확인한 내용이다
 - 이 레포는 개인 레포이므로 커밋 메시지는 `type: 한국어 설명` 형식에 attribution trailer 두 줄을 붙인다. 각 Task의 Commit step에 들어 있는 trailer는 계획 작성 세션 기준이므로, 실행 세션의 attribution 안내가 다르면 그 안내를 따른다
 - 테스트가 실패하면 코드 블록과 파일이 같은지부터 확인한다 (`diff`)
 
@@ -42,7 +42,7 @@
 | `plugins/brownfield-navigator/templates/*.md` | 조직, 개인, 프로젝트, 참고 파일 템플릿 |
 | `plugins/brownfield-navigator/tests/test-helpers.sh` | 단언, 테스트 실행, 픽스처 작성 도구 |
 | `plugins/brownfield-navigator/tests/run-all.sh` | 전체 테스트 실행 |
-| `plugins/brownfield-navigator/tests/*.test.sh` | lib, compose-guide, 훅, 템플릿 테스트 |
+| `plugins/brownfield-navigator/tests/*.test.sh` | lib, compose-guide, 훅, 템플릿, README 테스트 |
 
 spec과 달라진 점: 플러그인 스킬은 `/<플러그인>:<스킬>`로 호출되므로 안내문과 문서의 호출 이름을 `/brownfield-navigator:brownfield-navigator`, `/brownfield-navigator:harvest-profile`로 쓴다 (spec에도 반영됨).
 
@@ -1129,7 +1129,7 @@ argument-hint: "[레포 경로 또는 이름]"
 ## 호출되었을 때
 
 1. 작업 대상 경로를 정한다. 사용자가 경로를 말했으면 그 경로, 레포 이름만 말했으면 그 이름으로 찾은 경로, 아니면 현재 작업 디렉터리다
-2. 세션 컨텍스트에 `# brownfield-navigator 가이드`로 시작하는 병합된 가이드가 이미 있고 머리말의 `- 대상:` 경로가 작업 대상과 같은 레포면 추가로 할 일은 없다. 그 가이드대로 작업을 계속한다. 매칭 근거 줄은 경로 패턴이면 여러 레포에 함께 맞으므로 이 판단에 쓰지 않는다. 가이드가 길어 앞부분만 보이고 저장된 파일 경로가 함께 표시되어 있으면 그 파일을 Read한 뒤 판단한다. 불러올 수 있다는 한 줄 안내만 있거나 다른 레포 기준의 가이드라면 다음 단계로 간다
+2. 세션 컨텍스트에 `# brownfield-navigator 가이드`로 시작하는 병합된 가이드가 이미 있고 머리말의 `- 대상:` 경로가 작업 대상과 같은 레포면 추가로 할 일은 없다. 그 가이드대로 작업을 계속한다. 매칭 근거 줄은 경로 패턴이면 여러 레포에 함께 맞으므로 이 판단에 쓰지 않는다. 가이드가 길어 앞부분만 보이고 저장된 파일 경로가 함께 표시되어 있으면 그 파일을 Read한 뒤 판단한다. 불러올 수 있다는 한 줄 안내만 있거나 다른 레포 기준의 가이드라면 다음 단계로 간다. 사용자가 직접 호출했으면 어느 조직의 가이드가 적용 중인지와 그 가이드 끝의 경고를 한 줄로 알린다
 3. 아래 명령 중 하나를 실행한다. `--manual`은 `apply`가 `suggest`나 `off`인 설정도 적용하므로 사용자가 요청했을 때만 붙인다
 
    ```bash
@@ -2486,6 +2486,7 @@ EOF
 - Create: `README.md`
 - Create: `README.en.md`
 - Create: `.gitattributes`
+- Create: `plugins/brownfield-navigator/tests/readme.test.sh`
 
 - [ ] **Step 1: 한국어 README 작성**
 
@@ -2645,7 +2646,7 @@ Organize the guidance scattered across your project memories into organization, 
 
 It is a guide, not an enforcement mechanism. If you want a different approach, Claude follows your lead.
 
-The bundled core rules and templates are written in Korean. Rules are plain Markdown sections, so you can write your own profiles in any language.
+The bundled core rules and the profile templates the harvest skill starts from are written in Korean. Rules are plain Markdown sections, so you can write your own profiles in any language.
 
 ## How it works
 
@@ -2787,22 +2788,51 @@ Windows에서 `core.autocrlf`로 받아도 bash가 읽는 파일이 CRLF로 바�
 # 훅 스크립트는 Windows 자동 감지를 피하려고 확장자 없는 이름을 쓴다. 새 훅이 추가돼도 덮이도록
 # hooks/ 전체를 지정하고, Windows에서 cmd.exe가 실행해야 하는 .cmd 만 git 기본값(autocrlf)에 맡김
 plugins/brownfield-navigator/bin/* text eol=lf
-plugins/brownfield-navigator/hooks/* text eol=lf
-plugins/brownfield-navigator/hooks/*.cmd !text !eol
+plugins/brownfield-navigator/hooks/** text eol=lf
+plugins/brownfield-navigator/hooks/**/*.cmd !text !eol
 plugins/brownfield-navigator/lib/*.sh text eol=lf
 plugins/brownfield-navigator/tests/*.sh text eol=lf
 *.md text eol=lf
 ````
 
-- [ ] **Step 4: 전체 테스트와 검증**
+- [ ] **Step 4: README의 코어 규칙 id 목록을 지키는 테스트 작성**
+
+README는 코어 규칙 id 16개를 직접 나열한다. 코어 스킬에서 id가 늘거나 바뀌면 두 README가 조용히 틀린 문서가 되므로 테스트로 막는다.
+
+`plugins/brownfield-navigator/tests/readme.test.sh`
+
+````bash
+# README에 나열한 코어 규칙 id가 코어 스킬과 같은지 확인
+. "$(cd "$(dirname "$0")" && pwd -P)/test-helpers.sh"
+
+REPO_ROOT="$(cd "$PLUGIN_ROOT/../.." && pwd -P)"
+
+# 백틱으로 감싼 id만 골라낸다. `(코어)` 같은 다른 백틱 값은 문자 집합이 달라 걸리지 않는다
+list_backticked_ids() {
+  grep -m 1 "$2" "$1" | tr ',' '\n' | sed -n 's/.*`\([a-z0-9-]\{1,\}\)`.*/\1/p'
+}
+
+test_readme_core_ids_match_skill() {
+  local expected
+  expected="$(sed -n 's/^## \[\([a-z0-9-]\{1,\}\)\].*/\1/p' "$PLUGIN_ROOT/skills/brownfield-navigator/SKILL.md")"
+  assert_contains "$expected" "guide-stance" "코어 스킬에서 id를 읽음"
+  assert_equals "$expected" "$(list_backticked_ids "$REPO_ROOT/README.md" '코어 규칙의 id는')" "한국어 README의 코어 id 목록"
+  assert_equals "$expected" "$(list_backticked_ids "$REPO_ROOT/README.en.md" 'core rule ids')" "영어 README의 코어 id 목록"
+}
+
+run_test test_readme_core_ids_match_skill
+finish_tests
+````
+
+- [ ] **Step 5: 전체 테스트와 검증**
 
 실행: `bash plugins/brownfield-navigator/tests/run-all.sh; echo "exit=$?"; claude plugin validate . && claude plugin validate plugins/brownfield-navigator; git check-attr eol -- plugins/brownfield-navigator/bin/compose-guide plugins/brownfield-navigator/hooks/run-hook.cmd README.md`
-기대: 테스트 파일 6개 모두 `0개 실패`, 마지막 줄 `테스트 파일 6개 모두 통과`, `exit=0`, 검증 두 번 모두 `✔ Validation passed`, 속성은 `compose-guide: eol: lf`, `run-hook.cmd: eol: unspecified`, `README.md: eol: lf`
+기대: 테스트 파일 7개 모두 `0개 실패`, 마지막 줄 `테스트 파일 7개 모두 통과`, `exit=0`, 검증 두 번 모두 `✔ Validation passed`, 속성은 `compose-guide: eol: lf`, `run-hook.cmd: eol: unspecified`, `README.md: eol: lf`
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add README.md README.en.md .gitattributes
+git add README.md README.en.md .gitattributes plugins/brownfield-navigator/tests/readme.test.sh
 git commit -F - <<'EOF'
 docs: 설치, 프로필 형식, 사용법을 담은 README(한국어, 영어)와 줄바꿈 속성 추가
 
