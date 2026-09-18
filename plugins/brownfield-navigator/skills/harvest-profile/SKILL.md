@@ -19,7 +19,7 @@ argument-hint: "[조직 이름 또는 메모리 경로]"
 - 프로필 홈: 환경변수 `BROWNFIELD_NAVIGATOR_HOME`, 없으면 `~/.claude/brownfield-navigator`
 - 파일 형식과 예시: `${CLAUDE_PLUGIN_ROOT}/templates/`의 `org-profile.md`, `personal.md`, `project.md`, `reference.md`
 - 코어 규칙: `${CLAUDE_PLUGIN_ROOT}/skills/brownfield-navigator/SKILL.md`의 `## [id]` 섹션
-- 미리보기: `"${CLAUDE_PLUGIN_ROOT}/bin/compose-guide" "<레포 경로>"`
+- 미리보기: `"${CLAUDE_PLUGIN_ROOT}/bin/compose-guide" --manual "<레포 경로>"` (`--manual`은 `apply`가 `suggest`나 `off`여도 매칭 근거를 보기 위해 붙인다)
 - 중복 판정 기준: 전역 `~/.claude/CLAUDE.md`와 각 레포 루트의 `CLAUDE.md`
 
 ## 1. 수집
@@ -92,6 +92,6 @@ argument-hint: "[조직 이름 또는 메모리 경로]"
 ## 6. 보고
 
 1. 생성하거나 수정한 파일 목록
-2. 포함한 레포마다 `compose-guide` 미리보기. 매칭 근거 줄과 경고 절을 보여주고, 경고가 있으면 고친다. 다시 고칠 때도 5단계 3항의 승인 원칙을 따른다
+2. 포함한 레포마다 `--manual`을 붙인 `compose-guide` 미리보기. 매칭 근거 줄과 경고 절을 보여주고, 경고가 있으면 고친다. 미리보기는 `apply` 값과 무관하게 병합 결과를 보여주므로, 조직의 `apply`가 `suggest`나 `off`면 실제 세션에서는 각각 한 줄 안내와 주입 없음이 정상이라고 함께 알린다. 다시 고칠 때도 5단계 3항의 승인 원칙을 따른다
 3. 정리 후보 메모리 목록: 프로필로 옮겨진 메모리, CLAUDE.md(전역·레포)와 중복인 메모리. **삭제하지 않고 목록만 보고한다.** 정리는 사용자가 직접 한다
 4. 프로필 홈은 플러그인 바깥의 사용자 파일이므로, 다른 기기에서 쓰려면 따로 백업하거나 동기화해야 한다고 한 줄로 알린다

@@ -40,9 +40,26 @@ expand_home_prefix() {
   esac
 }
 
+# 경로 패턴을 비교할 수 있는 형태로 만듦
+#   앞머리의 ~ 를 홈 경로로 바꾸고, 끝의 / 를 뗌 (패턴이 / 하나면 그대로 둠)
+#   비교 후보는 dirname 으로 만들어 "/" 말고는 / 로 끝나지 않으므로, 끝 / 를 남겨 두면 어떤 경로에도 맞지 않는다
+normalize_path_pattern() {
+  local pattern
+  pattern="$(expand_home_prefix "$1")"
+  while [ "$pattern" != "/" ] && [ "${pattern%/}" != "$pattern" ]; do
+    pattern="${pattern%/}"
+  done
+  printf '%s\n' "$pattern"
+}
+
 # 대상 경로 또는 그 상위 디렉터리 중 하나가 패턴과 일치하면 성공
+# 상위로 올라가며 비교하므로 절대 경로만 받는다. 상대 경로는 dirname 이 `.` 에서 멈춰 끝나지 않는다
 path_or_ancestor_matches() {
   local candidate="$1" pattern="$2"
+  case "$candidate" in
+    /*) ;;
+    *) return 1 ;;
+  esac
   while :; do
     [[ "$candidate" == $pattern ]] && return 0
     [ "$candidate" = "/" ] && return 1
@@ -66,7 +83,7 @@ print_match_reason() {
         done < "$remotes_file"
         ;;
       path)
-        if path_or_ancestor_matches "$target_dir" "$(expand_home_prefix "$pattern")"; then
+        if path_or_ancestor_matches "$target_dir" "$(normalize_path_pattern "$pattern")"; then
           printf 'path %s\n' "$pattern"
           return 0
         fi

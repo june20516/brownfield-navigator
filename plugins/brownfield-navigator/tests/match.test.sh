@@ -29,6 +29,13 @@ test_expands_home_prefix() {
   assert_equals "/opt/*" "$(expand_home_prefix "/opt/*")" "~ 없으면 그대로"
 }
 
+test_normalizes_path_pattern() {
+  assert_equals "$HOME/work/acme" "$(normalize_path_pattern "~/work/acme/")" "~ 확장과 끝 / 제거"
+  assert_equals "/opt/acme" "$(normalize_path_pattern "/opt/acme//")" "끝 / 여러 개 제거"
+  assert_equals "/opt/acme/*" "$(normalize_path_pattern "/opt/acme/*")" "글롭으로 끝나면 그대로"
+  assert_equals "/" "$(normalize_path_pattern "/")" "패턴이 / 하나면 그대로"
+}
+
 test_path_matches_self_and_ancestors() {
   path_or_ancestor_matches "/work/acme/app" "/work/acme/app" || fail_assertion "자기 자신과 일치"
   path_or_ancestor_matches "/work/acme/app/src/deep" "/work/acme/app" || fail_assertion "하위 디렉터리에서 상위 경로와 일치"
@@ -52,6 +59,15 @@ test_match_reason_by_path() {
     "$(print_match_reason "$TEST_TMP/parsed" "$TEST_TMP/remotes" "$TEST_TMP/work/app/src")" "경로 조건 근거 출력"
 }
 
+test_match_reason_by_path_with_trailing_slash() {
+  mkdir -p "$TEST_TMP/home/work/acme/app/src"
+  printf '%s\n' "path=~/work/acme/" > "$TEST_TMP/parsed"
+  : > "$TEST_TMP/remotes"
+  assert_equals "path ~/work/acme/" \
+    "$(HOME="$TEST_TMP/home" print_match_reason "$TEST_TMP/parsed" "$TEST_TMP/remotes" "$TEST_TMP/home/work/acme/app/src")" \
+    "끝 / 가 붙은 ~ 경로 패턴도 매칭하고 근거는 원문 그대로"
+}
+
 test_no_match_returns_failure() {
   printf '%s\n' "remote=*acme/*" > "$TEST_TMP/parsed"
   printf '%s\n' "git@github.com:other/app" > "$TEST_TMP/remotes"
@@ -63,8 +79,10 @@ run_test test_normalizes_remote_url
 run_test test_lists_normalized_remotes
 run_test test_lists_nothing_outside_git
 run_test test_expands_home_prefix
+run_test test_normalizes_path_pattern
 run_test test_path_matches_self_and_ancestors
 run_test test_match_reason_by_remote
 run_test test_match_reason_by_path
+run_test test_match_reason_by_path_with_trailing_slash
 run_test test_no_match_returns_failure
 finish_tests

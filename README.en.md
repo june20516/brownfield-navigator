@@ -136,3 +136,7 @@ claude --plugin-dir plugins/brownfield-navigator
 ```
 
 If you add a core rule or rename an id, update the id list in both READMEs as well.
+
+## License
+
+MIT

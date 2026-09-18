@@ -50,6 +50,25 @@ read_apply_value() {
   sed -n 's/^apply=//p' "$1" | tail -n 1
 }
 
+# 매칭 조건이 하나도 없는 프로필은 어떤 레포에도 맞지 않는 설정 오류이므로 경고를 남기고 실패 반환
+check_match_conditions_or_warn() {
+  local profile_file="$1" parsed_file="$2"
+  grep -qE '^(remote|path)=' "$parsed_file" && return 0
+  add_warning "건너뜀 $profile_file: 매칭 조건 없음 (match-remotes, match-paths 모두 비어 있음)"
+  return 1
+}
+
+# 프로필 한 층을 규칙 섹션으로 나눠 병합하고, 규칙이 조용히 빠진 진단을 경고로 옮김
+merge_profile_layer() {
+  local markdown_file="$1" source_label="$2" layer_dir="$3" merged_dir="$4" diagnostic
+  rm -rf "$layer_dir"
+  extract_rule_sections "$markdown_file" "$layer_dir"
+  while IFS= read -r diagnostic; do
+    add_warning "$markdown_file: $diagnostic"
+  done < "$layer_dir/warnings"
+  merge_rule_layer "$layer_dir" "$source_label" "$merged_dir"
+}
+
 # 조직 하나를 매칭하고 적용 값에 따라 분류
 #   auto    $WORK_DIR/auto-orgs 에 "조직<TAB>매칭 근거" 추가
 #   suggest $WORK_DIR/suggest-orgs 에 조직 이름 추가
@@ -63,6 +82,7 @@ evaluate_org() {
   org_name="$(basename "$org_dir")"
   org_parsed="$WORK_DIR/org-$org_name.parsed"
   parse_or_warn "$org_profile" "$org_parsed" || return 0
+  check_match_conditions_or_warn "$org_profile" "$org_parsed" || return 0
   match_reason="$(print_match_reason "$org_parsed" "$WORK_DIR/remotes" "$TARGET_DIR")" || return 0
 
   matched_projects_file="$WORK_DIR/projects-$org_name"
@@ -74,6 +94,7 @@ evaluate_org() {
     project_name="$(basename "$project_file" .md)"
     project_parsed="$WORK_DIR/project-$org_name-$project_name.parsed"
     parse_or_warn "$project_file" "$project_parsed" || continue
+    check_match_conditions_or_warn "$project_file" "$project_parsed" || continue
     print_match_reason "$project_parsed" "$WORK_DIR/remotes" "$TARGET_DIR" >/dev/null || continue
     printf '%s\n' "$project_file" >> "$matched_projects_file"
     apply_value="$(read_apply_value "$project_parsed")"
@@ -131,18 +152,13 @@ print_suggestions() {
 
 print_rule_sections() {
   local org_name="$1" project_file merged_dir="$WORK_DIR/merged"
-  extract_rule_sections "$CORE_SKILL_FILE" "$WORK_DIR/layer-core"
-  merge_rule_layer "$WORK_DIR/layer-core" "코어" "$merged_dir"
-  extract_rule_sections "$PROFILE_HOME/orgs/$org_name/profile.md" "$WORK_DIR/layer-org"
-  merge_rule_layer "$WORK_DIR/layer-org" "조직: $org_name" "$merged_dir"
+  merge_profile_layer "$CORE_SKILL_FILE" "코어" "$WORK_DIR/layer-core" "$merged_dir"
+  merge_profile_layer "$PROFILE_HOME/orgs/$org_name/profile.md" "조직: $org_name" "$WORK_DIR/layer-org" "$merged_dir"
   if [ -f "$PROFILE_HOME/personal.md" ]; then
-    extract_rule_sections "$PROFILE_HOME/personal.md" "$WORK_DIR/layer-personal"
-    merge_rule_layer "$WORK_DIR/layer-personal" "개인" "$merged_dir"
+    merge_profile_layer "$PROFILE_HOME/personal.md" "개인" "$WORK_DIR/layer-personal" "$merged_dir"
   fi
   while IFS= read -r project_file; do
-    rm -rf "$WORK_DIR/layer-project"
-    extract_rule_sections "$project_file" "$WORK_DIR/layer-project"
-    merge_rule_layer "$WORK_DIR/layer-project" "프로젝트: $(basename "$project_file" .md)" "$merged_dir"
+    merge_profile_layer "$project_file" "프로젝트: $(basename "$project_file" .md)" "$WORK_DIR/layer-project" "$merged_dir"
   done < "$WORK_DIR/projects-$org_name"
   print_merged_sections "$merged_dir" "코어"
 }

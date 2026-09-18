@@ -5,13 +5,16 @@
 #   <출력 디렉터리>/ids          등장 순서대로 id 목록
 #   <출력 디렉터리>/<id>.title   헤딩의 제목 부분
 #   <출력 디렉터리>/<id>.body    헤딩 다음 줄부터 다음 ## 헤딩 전까지
+#   <출력 디렉터리>/warnings     규칙이 조용히 빠진 이유. 호출자가 경고로 올린다 (없으면 빈 파일)
 # frontmatter, id 없는 ## 섹션, 첫 ## 헤딩 이전 내용은 건너뜀
 # 코드 블록 안의 ## 줄은 헤딩으로 보지 않음
 extract_rule_sections() {
   local markdown_file="$1" output_dir="$2"
   mkdir -p "$output_dir"
   : > "$output_dir/ids"
-  awk -v output_dir="$output_dir" '
+  : > "$output_dir/warnings"
+  LC_ALL=C awk -v output_dir="$output_dir" '
+    BEGIN { warnings_file = output_dir "/warnings" }
     NR == 1 && $0 == "---" { in_frontmatter = 1; next }
     in_frontmatter { if ($0 == "---") in_frontmatter = 0; next }
     /^[[:space:]]*```/ { in_code_block = !in_code_block }
@@ -32,10 +35,17 @@ extract_rule_sections() {
           seen[section_id] = 1
           print section_id >> (output_dir "/ids")
         }
+      } else if ($0 ~ /^##[[:space:]]+\[/) {
+        # id를 쓰려 한 헤딩인데 형식이 달라 규칙으로 읽히지 않는다. 설명용 ## 섹션과 구분해 알린다
+        print "id 형식([a-z0-9-]+)이 아닌 규칙 헤딩 무시: " $0 >> warnings_file
       }
       next
     }
     body_file != "" { print >> body_file }
+    END {
+      # 닫는 --- 가 없으면 파일 전체가 frontmatter로 읽혀 규칙이 하나도 남지 않는다
+      if (in_frontmatter) print "frontmatter가 닫히지 않아 규칙을 읽지 못함" >> warnings_file
+    }
   ' "$markdown_file"
 }
 
@@ -77,14 +87,14 @@ print_merged_sections() {
 
 # 앞쪽 빈 줄을 건너뛰고 첫 문단(다음 빈 줄 전까지)만 출력
 print_first_paragraph() {
-  awk '
+  LC_ALL=C awk '
     /^[[:space:]]*$/ { if (started) exit; next }
     { started = 1; print }
   ' "$1"
 }
 
 print_without_trailing_blank_lines() {
-  awk '
+  LC_ALL=C awk '
     { lines[NR] = $0 }
     END {
       last = NR

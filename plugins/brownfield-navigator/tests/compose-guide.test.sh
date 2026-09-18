@@ -32,6 +32,28 @@ write_project_file() {
   done
 }
 
+# 출력은 버리고 종료 코드만 확인 (compose-guide 의 종료 코드는 항상 0)
+assert_compose_guide_exit_zero() {
+  local label="$1"
+  shift
+  run_compose_guide "$@" >/dev/null 2>&1
+  assert_equals 0 "$?" "$label"
+}
+
+# bin/compose-guide 의 count_characters 와 같은 방식으로 파일의 UTF-8 문자 수를 셈
+count_output_characters() {
+  LC_ALL=C tr -d '\200-\277' < "$1" | wc -c | tr -d ' '
+}
+
+# 규칙 본문 길이만 다른 acme 조직 프로필을 씀. 가이드 전체 길이를 원하는 값에 맞출 때 쓴다
+write_acme_profile_with_body_length() {
+  local body_length="$1" body
+  body="$(awk -v goal="$body_length" 'BEGIN { for (i = 0; i < goal; i++) printf "가" }')"
+  write_lines "$TEST_TMP/profiles/orgs/acme/profile.md" \
+    "---" "match-remotes:" '  - "*acme/*"' "---" \
+    "## [long-rule] 긴 규칙" "$body"
+}
+
 test_empty_without_profile_home() {
   make_git_repo "$TEST_TMP/app" "git@github.com:acme/app.git"
   assert_empty "$(run_compose_guide "$TEST_TMP/app")" "프로필 홈이 없으면 빈 출력"
@@ -95,6 +117,34 @@ test_notice_when_guide_exceeds_budget() {
     "## [medium-rule] 중간 규칙" "$medium_body"
   make_git_repo "$TEST_TMP/beta-app" "git@github.com:beta/app.git"
   assert_not_contains "$(run_compose_guide "$TEST_TMP/beta-app")" "> 이 가이드는" "바이트가 아니라 문자 수로 셈 (한글 4,000자 규칙은 예산 안)"
+}
+
+test_budget_boundary_is_inclusive() {
+  make_git_repo "$TEST_TMP/app" "git@github.com:acme/app.git"
+  # 본문 길이를 1자 늘리면 가이드도 1자 길어지므로, 짧은 본문으로 한 번 재서 정확히 9,000자가 되는 길이를 구한다
+  local probe_body_length=100 probe_length exact_body_length
+  write_acme_profile_with_body_length "$probe_body_length"
+  run_compose_guide "$TEST_TMP/app" > "$TEST_TMP/probe-output"
+  probe_length="$(count_output_characters "$TEST_TMP/probe-output")"
+  exact_body_length=$((probe_body_length + 9000 - probe_length))
+
+  write_acme_profile_with_body_length "$exact_body_length"
+  run_compose_guide "$TEST_TMP/app" > "$TEST_TMP/exact-output"
+  assert_equals 9000 "$(count_output_characters "$TEST_TMP/exact-output")" "예산 경계에 정확히 맞춘 가이드"
+  assert_not_contains "$(cat "$TEST_TMP/exact-output")" "> 이 가이드는" "정확히 9,000자면 안내 없음"
+
+  write_acme_profile_with_body_length "$((exact_body_length + 1))"
+  assert_contains "$(run_compose_guide "$TEST_TMP/app")" "> 이 가이드는 9001자로" "9,001자면 안내"
+}
+
+test_exit_code_is_always_zero() {
+  make_git_repo "$TEST_TMP/app" "git@github.com:acme/app.git"
+  assert_compose_guide_exit_zero "프로필 홈이 없어도 0" "$TEST_TMP/app"
+  write_org_profile acme "match-remotes:" '  - "*acme/*"'
+  assert_compose_guide_exit_zero "가이드를 출력해도 0" "$TEST_TMP/app"
+  write_lines "$TEST_TMP/profiles/orgs/broken/profile.md" "apply: auto"
+  assert_compose_guide_exit_zero "파싱에 실패해 경고를 남겨도 0" "$TEST_TMP/app"
+  assert_compose_guide_exit_zero "없는 대상 디렉터리도 0" "$TEST_TMP/missing"
 }
 
 test_project_matching_and_layer_precedence() {
@@ -200,6 +250,12 @@ test_manual_mode_merges_suggest_and_off() {
   make_git_repo "$TEST_TMP/gamma-app" "git@github.com:gamma/app.git"
   assert_contains "$(run_compose_guide --manual "$TEST_TMP/beta-app")" "## [beta-rule] beta 규칙 (조직: beta)" "--manual은 suggest도 병합"
   assert_contains "$(run_compose_guide --manual "$TEST_TMP/gamma-app")" "## [gamma-rule] gamma 규칙 (조직: gamma)" "--manual은 off도 병합"
+
+  write_org_profile delta "match-remotes:" '  - "*delta/*"'
+  write_project_file delta app "apply: off" "match-remotes:" '  - "*delta/app"' -- "## [delta-app-rule] 델타 앱 규칙" "본문"
+  make_git_repo "$TEST_TMP/delta-app" "git@github.com:delta/app.git"
+  assert_empty "$(run_compose_guide "$TEST_TMP/delta-app")" "프로젝트 off는 기본 호출에서 출력 없음"
+  assert_contains "$(run_compose_guide --manual "$TEST_TMP/delta-app")" "## [delta-app-rule] 델타 앱 규칙 (프로젝트: app)" "--manual은 프로젝트 off도 병합"
 }
 
 test_warnings_only_when_nothing_matches() {
@@ -223,6 +279,36 @@ test_warns_on_unreadable_profile_files() {
   assert_contains "$output" "건너뜀 $TEST_TMP/profiles/orgs/folder/profile.md: 파일을 읽을 수 없음" "디렉터리인 조직 프로필은 경고"
   assert_contains "$output" "건너뜀 $TEST_TMP/profiles/orgs/acme/projects/linked.md: 파일을 읽을 수 없음" "깨진 링크인 프로젝트 파일은 경고"
   assert_contains "$output" "## [acme-rule]" "읽을 수 있는 조직 프로필은 계속 병합"
+}
+
+test_warns_on_profile_without_match_conditions() {
+  write_lines "$TEST_TMP/profiles/orgs/acme/profile.md" \
+    "---" "apply: auto" "match-paths: []" "---" "" \
+    "## [acme-rule] acme 규칙" "acme 규칙 본문"
+  write_org_profile beta "match-remotes:" '  - "*beta/*"'
+  write_project_file beta no-condition "apply: auto" -- "## [no-condition-rule] 조건 없는 규칙" "본문"
+  make_git_repo "$TEST_TMP/beta-app" "git@github.com:beta/app.git"
+  local output
+  output="$(run_compose_guide "$TEST_TMP/beta-app")"
+  assert_contains "$output" "건너뜀 $TEST_TMP/profiles/orgs/acme/profile.md: 매칭 조건 없음" "조직 프로필의 매칭 조건 없음 경고"
+  assert_contains "$output" "건너뜀 $TEST_TMP/profiles/orgs/beta/projects/no-condition.md: 매칭 조건 없음" "프로젝트 파일의 매칭 조건 없음 경고"
+  assert_not_contains "$output" "no-condition-rule" "매칭 조건이 없는 프로젝트 파일은 병합하지 않음"
+  assert_contains "$output" "## [beta-rule] beta 규칙 (조직: beta)" "매칭 조건이 있는 조직은 계속 병합"
+}
+
+test_warns_when_rule_sections_are_dropped() {
+  write_lines "$TEST_TMP/profiles/orgs/acme/profile.md" \
+    "---" "match-remotes:" '  - "*acme/*"' "---" "" \
+    "## [Acme-Rule] 대문자 id" "대문자 본문" \
+    "## [acme-rule] 정상 id" "정상 본문"
+  write_lines "$TEST_TMP/profiles/personal.md" "---" "## [my-habit] 내 습관" "습관 본문"
+  make_git_repo "$TEST_TMP/app" "git@github.com:acme/app.git"
+  local output
+  output="$(run_compose_guide "$TEST_TMP/app")"
+  assert_contains "$output" "$TEST_TMP/profiles/orgs/acme/profile.md: id 형식([a-z0-9-]+)이 아닌 규칙 헤딩 무시: ## [Acme-Rule] 대문자 id" "id 형식이 아닌 헤딩 경고"
+  assert_contains "$output" "$TEST_TMP/profiles/personal.md: frontmatter가 닫히지 않아 규칙을 읽지 못함" "닫히지 않은 frontmatter 경고"
+  assert_not_contains "$output" "my-habit" "닫히지 않은 frontmatter의 규칙은 병합되지 않음"
+  assert_contains "$output" "## [acme-rule] 정상 id (조직: acme)" "형식에 맞는 규칙은 계속 병합"
 }
 
 test_invalid_utf8_in_profile_keeps_full_guide() {
@@ -275,6 +361,8 @@ run_test test_empty_when_nothing_matches
 run_test test_merges_core_and_org_on_ssh_remote
 run_test test_core_sections_are_summarized
 run_test test_notice_when_guide_exceeds_budget
+run_test test_budget_boundary_is_inclusive
+run_test test_exit_code_is_always_zero
 run_test test_project_matching_and_layer_precedence
 run_test test_matches_https_remote_with_trailing_slash
 run_test test_matches_path_without_git_from_subdirectory
@@ -286,6 +374,8 @@ run_test test_multiple_projects_use_last_apply_and_warn
 run_test test_manual_mode_merges_suggest_and_off
 run_test test_warnings_only_when_nothing_matches
 run_test test_warns_on_unreadable_profile_files
+run_test test_warns_on_profile_without_match_conditions
+run_test test_warns_when_rule_sections_are_dropped
 run_test test_invalid_utf8_in_profile_keeps_full_guide
 run_test test_unsupported_key_warning_with_guide
 run_test test_two_auto_orgs_apply_first_only

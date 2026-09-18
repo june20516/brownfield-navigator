@@ -33,6 +33,30 @@ second-rule" "$(cat "$TEST_TMP/layer/ids")" "id 섹션만 등장 순서대로"
   assert_contains "$(cat "$TEST_TMP/layer/second-rule.body")" "## [inside-indented-code] 들여쓴 코드 블록 안" "들여쓴 코드 블록 안 헤딩도 본문으로 유지"
 }
 
+test_warns_when_frontmatter_is_not_closed() {
+  write_lines "$TEST_TMP/rules.md" "---" "name: sample" "## [a-rule] 규칙" "본문"
+  extract_rule_sections "$TEST_TMP/rules.md" "$TEST_TMP/layer"
+  assert_empty "$(cat "$TEST_TMP/layer/ids")" "닫는 --- 가 없으면 규칙을 하나도 읽지 못함"
+  assert_equals "frontmatter가 닫히지 않아 규칙을 읽지 못함" "$(cat "$TEST_TMP/layer/warnings")" "규칙이 사라진 이유를 진단으로 남김"
+}
+
+test_warns_on_heading_that_is_not_a_valid_id() {
+  write_lines "$TEST_TMP/rules.md" \
+    "## [My-Rule] 대문자" "대문자 본문" \
+    "## [rule_1] 밑줄" "밑줄 본문" \
+    "##  [two-spaces] 공백 두 개" "공백 본문" \
+    "## 설명용 섹션" "설명 본문" \
+    "## [ok-rule] 정상" "정상 본문"
+  extract_rule_sections "$TEST_TMP/rules.md" "$TEST_TMP/layer"
+  local warnings
+  warnings="$(cat "$TEST_TMP/layer/warnings")"
+  assert_equals "ok-rule" "$(cat "$TEST_TMP/layer/ids")" "id 형식에 맞는 섹션만 병합 대상"
+  assert_contains "$warnings" "id 형식([a-z0-9-]+)이 아닌 규칙 헤딩 무시: ## [My-Rule] 대문자" "대문자 id 진단"
+  assert_contains "$warnings" "id 형식([a-z0-9-]+)이 아닌 규칙 헤딩 무시: ## [rule_1] 밑줄" "밑줄 id 진단"
+  assert_contains "$warnings" "id 형식([a-z0-9-]+)이 아닌 규칙 헤딩 무시: ##  [two-spaces] 공백 두 개" "공백 두 개 진단"
+  assert_not_contains "$warnings" "설명용 섹션" "id를 쓰려 하지 않은 ## 섹션은 진단 없음"
+}
+
 test_merges_layers_in_place() {
   write_lines "$TEST_TMP/core.md" "## [alpha] 코어 알파" "코어 알파 본문" "## [beta] 코어 베타" "코어 베타 본문"
   write_lines "$TEST_TMP/project.md" "## [alpha] 프로젝트 알파" "프로젝트 알파 본문" "## [gamma] 프로젝트 감마" "감마 본문"
@@ -77,6 +101,8 @@ test_prints_first_paragraph_for_summary_source() {
 }
 
 run_test test_extracts_only_id_sections
+run_test test_warns_when_frontmatter_is_not_closed
+run_test test_warns_on_heading_that_is_not_a_valid_id
 run_test test_merges_layers_in_place
 run_test test_prints_heading_without_title
 run_test test_prints_first_paragraph_for_summary_source

@@ -134,3 +134,7 @@ claude --plugin-dir plugins/brownfield-navigator
 ```
 
 코어 규칙을 더하거나 id를 바꿨다면 두 README의 id 목록도 함께 고칩니다.
+
+## 라이선스
+
+MIT

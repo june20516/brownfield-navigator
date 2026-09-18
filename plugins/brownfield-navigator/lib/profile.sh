@@ -14,7 +14,7 @@ parse_profile_frontmatter() {
     printf 'error=파일을 읽을 수 없음\n'
     return 0
   fi
-  awk -v squote="'" '
+  LC_ALL=C awk -v squote="'" '
     function trim(text) {
       sub(/^[[:space:]]+/, "", text)
       sub(/[[:space:]]+$/, "", text)
@@ -104,7 +104,7 @@ parse_profile_frontmatter() {
 read_reference_description() {
   local reference_file="$1"
   [ -f "$reference_file" ] && [ -r "$reference_file" ] || return 0
-  awk -v squote="'" '
+  LC_ALL=C awk -v squote="'" '
     NR == 1 { if ($0 != "---") exit; next }
     $0 == "---" { exit }
     match($0, /^description[[:space:]]*:/) {

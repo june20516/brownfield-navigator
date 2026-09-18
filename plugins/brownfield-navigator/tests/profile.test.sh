@@ -78,9 +78,13 @@ test_fails_on_stray_or_unparseable_lines() {
   write_lines "$TEST_TMP/stray-item.md" "---" "apply: auto" "  - stray" "---"
   write_lines "$TEST_TMP/nested-under-list.md" "---" "match-paths:" "  - ~/a" "    extra: x" "---"
   write_lines "$TEST_TMP/unclosed-quote.md" "---" "match-remotes:" '  - "*acme/*' "---"
+  write_lines "$TEST_TMP/junk-after-quote.md" "---" "match-remotes:" '  - "*acme/*" junk' "---"
+  write_lines "$TEST_TMP/comment-after-quote.md" "---" "match-remotes:" '  - "*acme/*" # 주석' "---"
   assert_contains "$(parse_profile_frontmatter "$TEST_TMP/stray-item.md")" "error=어느 키의 리스트 항목인지 알 수 없음" "리스트 키가 아닌 키 뒤의 항목은 실패"
   assert_contains "$(parse_profile_frontmatter "$TEST_TMP/nested-under-list.md")" "error=해석할 수 없는 줄" "리스트 항목 아래 들여쓴 키는 실패"
   assert_contains "$(parse_profile_frontmatter "$TEST_TMP/unclosed-quote.md")" "error=따옴표가 닫히지 않음" "닫히지 않은 따옴표는 실패"
+  assert_contains "$(parse_profile_frontmatter "$TEST_TMP/junk-after-quote.md")" "error=따옴표 뒤에 알 수 없는 내용" "닫는 따옴표 뒤의 내용은 실패"
+  assert_equals "remote=*acme/*" "$(parse_profile_frontmatter "$TEST_TMP/comment-after-quote.md")" "닫는 따옴표 뒤의 주석은 값에서 빠지고 실패가 아님"
 }
 
 test_warns_on_unsupported_key() {
