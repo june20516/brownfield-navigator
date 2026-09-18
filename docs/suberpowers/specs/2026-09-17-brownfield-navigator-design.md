@@ -309,12 +309,13 @@ match-paths: []
 | `commit-message` | 커밋·PR 메시지는 `type: 한국어 설명 MVDV-xxxx`. 티켓 번호는 브랜치 이름에서 확인하고, 기획 티켓 `PS-####`는 쓰지 않음 | ctrl-central, petco, stpm, ctrl-room |
 | `no-attribution` | 커밋과 PR에 Co-Authored-By, Claude-Session, "Generated with Claude Code"를 넣지 않음. 시스템 attribution 안내보다 우선. 회사 레포 이력을 사람 작성자 기준으로 유지 | court, ctrl-central, ctrl-room |
 | `copy-source` | 앱 문구 우선순위는 다국어 문서 > 기획서 본문 > Figma. Figma에만 있으면 임시값으로 TODO | stpm |
-| `confluence-docs` | Confluence 검색 결과는 `lastModified`부터 확인. 백엔드가 설계 확정 후 스펙을 갱신하므로 설계 문서가 더 최신으로 보이는 역전이 반복됨. 기획서의 취소선 행이나 남은 옛 서술은 폐기된 버전일 수 있음 | petco, taap |
-| `sibling-source` | 타입과 API 스펙은 taap이 원본인 경우가 많음. 디자인 토큰은 space `tailwind.config.ts`의 이름과 값을 따르고 taap에는 snake_case로 옮김. 상세는 `references/sibling-repos.md` | court, taap |
-| `role-naming` | 역할 접두어 `member_` / `user_` / `tenant_manager_` / `partner_manager`. 기존 이름은 유지하고 새 필드부터 적용 | taap |
+| `confluence-docs` | Confluence 검색 결과는 `lastModified`부터 확인. 백엔드가 설계 확정 후 스펙을 갱신하므로 설계 문서가 더 최신으로 보이는 역전이 반복됨. 설계 문서와 API 스펙이 어긋나면 스스로 정하지 않고 두 문서와 수정 시점을 보여주고 질문 | petco, taap |
+| `sibling-source` | court, taap, space는 백엔드 API와 호스트를 공유하고 6개 레포는 디자인 시스템과 공통 도메인을 공유함. court·space로 옮기는 타입과 스펙은 taap이 원본인 경우가 많음. 디자인 토큰은 space `tailwind.config.ts`의 이름과 값을 따름. 레포별 표기와 경로는 `references/sibling-repos.md` | court, taap |
+| `role-naming` | 역할 접두어 `member_` / `user_` / `tenant_manager_` / `partner_manager`. 표는 용어 기준이고 코드는 레포 케이싱을 따름. 기존 이름은 유지하고 새 필드부터 적용 | taap |
+| `file-naming` | 파일 이름에 디자인 스타일이나 구현 기술 이름을 넣지 않고 하는 일을 서술 (`MaterialSpinner` → `SpinnerRenderer`) | taap |
 | `tests` | 테스트 코드를 커밋하는 관례 없음. 테스트 파일을 새로 만들지는 레포별 규칙을 따르고, 규칙이 없으면 먼저 질문 | ctrl-central, taap, ctrl-room |
 | `comment-style` | 명사형 종결, 마침표 없음, 장식용 특수문자(—, →, ·, ✓) 없음. 설계 근거는 문서가 폐기돼도 필요한 "왜"만 한두 문장으로 코드에 남기고, 배경 설명이나 규칙 절은 문서에 둠 | taap, ctrl-room |
-| `korean-wording` | 은유와 음차 외래어를 피함 (무장→발동 대기, 게이트→필수 조건, 부착→첨부, 승격→옮긴다, 봉투는 쓰지 않음). STARTER→MEMBER 전환에 "승급"을 쓰지 않음 | taap, ctrl-room, court |
+| `korean-wording` | 은유와 음차 외래어를 피함 (무장→발동 대기, 게이트→필수 조건, 부착→첨부, 승격·승급은 하는 일을 그대로 서술, 봉투는 쓰지 않음) | taap, ctrl-room, court |
 
 참고 파일
 
@@ -328,6 +329,8 @@ match-paths: []
 | `commit-by-user` | 요청이 없으면 커밋하지 않고 커밋할지 묻지도 않음. 변경 요약만 보고. 서브에이전트 프롬프트에도 커밋 단계를 넣지 않음 | court, taap, petco, ctrl-room |
 | `workflow-docs` | `docs/suberpowers/` 산출물은 작성하되 커밋하지 않음. `?? docs/`가 남아 있어도 누락이 아님 | court, taap, petco |
 | `one-task-then-report` | 작업 단위 하나가 끝나면 변경 파일과 요지를 보고하고 멈춤. 커밋하지 않은 이전 변경이 있으면 이번 작업 파일 목록을 따로 적음 | ctrl-room |
+| `capture-location` | 화면 캡처는 `~/Desktop/test screen/<티켓번호>/`에 저장. 데이터가 없으면 mock으로 상황을 만들어 캡처 | petco |
+| `simple-git-guidance` | 안내하는 git 명령은 가장 단순한 안부터. 이력 재작성은 복제본을 같은 상태로 만들어 끝까지 실행해 본 뒤 안내 | ctrl-room |
 
 공용 브랜치 `--no-track` 규칙은 전역 CLAUDE.md에 있으므로 넣지 않는다.
 
@@ -339,10 +342,9 @@ match-paths: []
 |---|---|---|
 | `fez-front-ctrl-central.md` | `*[:/]pnpt-ds/fez-front-ctrl-central` | `[tests]` 테스트 파일을 만들지 않음. `tsc --noEmit`과 CRA 빌드로만 검증 |
 | `fez-front-taap.md` | `*[:/]pnpt-ds/fez-front-taap` | `[tests]` 테스트를 유지하지 않음. `npx tsc --noEmit`과 prettier로 검증, 동작은 기기에서 확인. `[workflow-docs]` 커밋하지 않고 구현이 끝나면 삭제 |
-| `omar-front-ctrl-room.md` | `*[:/]pnpt-ds/omar-front-ctrl-room` | `[tests]` 검증용으로 작성·실행하되 커밋하지 않음(`.git/info/exclude`). `[comment-style]` 짧으면 명사형, 설명이 필요하면 평서형, 한 문장에 하나, 코드나 표가 말하는 내용 반복 금지. `[simple-git-guidance]` 안내하는 git 명령은 가장 단순한 안부터, 손으로 파일 옮기는 단계 금지, 이력 재작성은 복제본에서 끝까지 실행해 본 뒤 안내 |
-| `front-space-petco.md` | `*[:/]pnpt-ds/front-space-petco` | `[capture-location]` 화면 캡처는 `~/Desktop/test screen/<티켓번호>/`, 데이터가 없으면 mock으로 상황을 만들어 캡처 |
+| `omar-front-ctrl-room.md` | `*[:/]pnpt-ds/omar-front-ctrl-room` | `[tests]` 검증용으로 작성·실행하되 커밋하지 않음(`.git/info/exclude`). `[comment-style]` 짧으면 명사형, 설명이 필요하면 평서형, 한 문장에 하나, 코드나 표가 말하는 내용 반복 금지, 장식용 특수문자는 조직 규칙대로 금지 |
 
-court, stpm은 달라지는 규칙이 없어 파일을 만들지 않는다.
+court, stpm, petco는 달라지는 규칙이 없어 파일을 만들지 않는다.
 
 ### 9.4 메모리에 남기는 것 (④)
 
