@@ -2853,6 +2853,7 @@ spec 14장 확인 결과: claude-sync의 동기화 대상은 `~/.claude/agents/`
 - Create: `~/.claude/brownfield-navigator/orgs/pnpt/profile.md`
 - Create: `~/.claude/brownfield-navigator/orgs/pnpt/references/sibling-repos.md`
 - Create: `~/.claude/brownfield-navigator/orgs/pnpt/references/app-webview.md`
+- Create: `~/.claude/brownfield-navigator/orgs/pnpt/references/git-guidance.md`
 - Create: `~/.claude/brownfield-navigator/personal.md`
 - Create: `~/.claude/brownfield-navigator/orgs/pnpt/projects/fez-front-ctrl-central.md`
 - Create: `~/.claude/brownfield-navigator/orgs/pnpt/projects/fez-front-taap.md`
@@ -2909,17 +2910,16 @@ Figma에만 있는 문구를 넣을 때는 임시값임을 TODO로 남긴다. �
 ## [confluence-docs] Confluence 문서 읽기
 
 - 검색 결과에 함께 오는 `lastModified`부터 확인한다. 백엔드는 설계를 확정한 뒤 스펙을 갱신하는 순서로 일하므로 문서 간 시점 역전이 반복된다
-- 같은 주제의 설계 문서와 API 스펙이 어긋나면 어느 쪽을 따를지 스스로 정하지 않는다. 두 문서와 각각의 수정 시점을 보여주고 묻는다
+- 같은 주제의 설계 문서와 API 스펙이 어긋나면 어느 쪽을 따를지 스스로 정하지 않는다. 양쪽 해석에서 같은 결과를 내는 구현이 있으면 그것을 먼저 제안하고, 없으면 두 문서와 각각의 수정 시점을 보여주고 묻는다
 
 **Why:** 설계 문서만 보고 FE 합성 로직을 폐기했다가, 더 늦게 고쳐진 스펙을 보고 되돌린 일이 있었다.
 
 ## [sibling-source] 자매 레포가 원본인 것
 
-court, taap, space(petco)는 같은 백엔드 API와 호스트네임을 공유하고, 6개 레포는 디자인 시스템과 공통 도메인 API(`/api/building`, `/api/product`, `/api/contract`)를 공유한다.
+court, taap, space(petco)는 같은 백엔드와 호스트네임을, 6개 레포는 디자인 시스템과 도메인 구분을 공유한다. HTTP 접두어와 레포별 경로는 참고 파일 `sibling-repos.md`에 있다.
 
-- court, space로 옮기는 API 타입과 스펙은 taap(`fez-front-taap/src/apis/types/`)이 원본인 경우가 많다. 옮길 때는 코어 `[spec-import]` 규칙대로 전체를 가져온다
-- 새 디자인 토큰은 이름을 새로 짓지 않고 space `front-space-petco/tailwind.config.ts`의 이름과 값을 먼저 찾아 맞춘다(레포별 표기는 참고 파일에 있다). 값이 기존 토큰과 다르면 임의로 합치지 않고 알린다
-- 레포별 위치, 도메인, 원본 경로는 참고 파일 `sibling-repos.md`에 있다
+- court, space로 옮기는 API 타입과 스펙은 taap이 원본인 경우가 많다. 옮길 때는 코어 `[spec-import]`대로 전체를 가져온다
+- 새 디자인 토큰은 이름을 새로 짓지 않고 space `tailwind.config.ts`의 이름과 값을 먼저 찾아 맞춘다. 값이 기존 토큰과 다르면 임의로 합치지 않고 알린다
 
 **Why:** 같은 시스템을 쓰는 레포끼리 이름과 스펙이 갈라지면 시안 대조와 유지보수가 어려워진다.
 
@@ -2946,7 +2946,7 @@ court, taap, space(petco)는 같은 백엔드 API와 호스트네임을 공유�
 
 ## [tests] 테스트 코드
 
-테스트 코드를 커밋하는 관례가 없다. 테스트 파일을 새로 만들지는 이 가이드의 프로젝트 규칙을 따르고, 그 레포 규칙이 없으면 만들기 전에 묻는다.
+테스트 코드를 커밋하는 관례가 없다. 이 가이드에 그 레포의 `[tests]` 규칙이 따로 없으면 테스트 파일을 만들기 전에 묻는다.
 
 **Why:** 테스트 설정이 있어 보여도 실제로는 테스트를 유지하지 않는 레포가 대부분이다.
 
@@ -2969,7 +2969,8 @@ court, taap, space(petco)는 같은 백엔드 API와 호스트네임을 공유�
 | 무장, arming | 발동 대기 |
 | 게이트, gating | 필수 조건 |
 | 부착 | 첨부 |
-| 승격, 승급 | 하는 일을 그대로 서술 (`STARTER => MEMBER 처리`) |
+| 승격 (레이어) | 옮긴다 |
+| 승급 (ROLE 전환) | 하는 일을 그대로 서술 (`STARTER => MEMBER 처리`) |
 | 봉투 (응답 구조 비유) | "응답에 meta가 있다"처럼 그대로 서술 |
 | 계측 | 관측, 수집, 또는 하는 일을 서술 |
 
@@ -3006,6 +3007,11 @@ court, taap, space는 같은 백엔드 API(`/api/court/...`)와 호스트네임�
 - taap API 함수: `src/apis/{contract,partner,visitor}.ts`
 - space 셀프 방문 승인 화면: `src/app/visitor/selfRegist/`. court에서 이동할 때는 같은 도메인이므로 `window.location.href = '/front/space/visitor/selfRegist'`
 - space 디자인 토큰: `tailwind.config.ts`의 colors (`system-blue-01`, `system-blue-01-bg`(7%), `system-blue-01-border`(20%) 형태). taap은 snake_case라 `system_blue_01_bg`로 옮긴다
+
+## API 접두어와 도메인 구분
+
+- HTTP 접두어는 레포마다 다르다. court, taap, stpm은 `/api/court`, Ctrl.room은 `/api/ctrl`, Ctrl.central은 `/api/central`
+- 도메인 구분 이름(`building`, `product`, `contract`)은 공유한다. 웹 3곳은 `src/api/<도메인>/`, taap과 stpm은 `src/apis/<도메인>.ts` 형태
 
 ## 환경별 도메인
 
@@ -3048,7 +3054,28 @@ taap의 `src/components/WebViewCommon.tsx`가 주입하는 `PageHistoryInjectCod
 **함정:** iOS만 테스트하면 2번 경로가 가려 줘서 통과하고, Android에서만 "뒤로가기를 누르면 웹뷰가 바로 닫힘"으로 나타난다. 웹뷰 콘텐츠 쪽(space 등)에서는 우회가 어렵고 taap 쪽 수정이 필요하다.
 ````
 
-- [ ] **Step 5: 개인 프로필 작성**
+- [ ] **Step 5: 참고 파일 작성 (git 명령 검증 절차)**
+
+`~/.claude/brownfield-navigator/orgs/pnpt/references/git-guidance.md`
+
+````markdown
+---
+description: 이력 재작성 명령을 복제본에서 검증하는 절차
+---
+
+# git 명령 검증 절차
+
+rebase, reset, fixup처럼 이력을 재작성하는 명령은 안내하기 전에 복제본에서 끝까지 실행해 본다.
+
+1. 스크래치에 `git clone`으로 복제하고 원본과 같은 상태로 만든다. 미커밋 변경은 `git diff --binary`로 적용하고, 미추적 파일도 함께 옮긴다
+2. 복제본에 `user.name`, `user.email`, `user.signingkey`를 로컬 설정으로 넣는다. 복제본 경로는 `~/.gitconfig-working`의 `includeIf` 조건에 맞지 않아 서명 설정이 빠진다
+3. 명령을 끝까지 실행한 뒤 커밋 내용 diff, 작업 트리 변경 수, 미추적 파일, stash가 비어 있는지를 확인한다
+4. 확인한 결과를 함께 안내한다
+
+**Why:** 검증 없이 안내한 리베이스가 실패했고, 파일을 손으로 옮기는 단계에서 테스트 파일 이름이 뒤바뀐 적이 있다.
+````
+
+- [ ] **Step 6: 개인 프로필 작성**
 
 `~/.claude/brownfield-navigator/personal.md`
 
@@ -3082,19 +3109,21 @@ taap의 `src/components/WebViewCommon.tsx`가 주입하는 `PageHistoryInjectCod
 
 작업 결과 화면 캡처는 `~/Desktop/test screen/<티켓번호>/`(예: `MVDV-9736`) 하위 디렉터리를 만들어 저장한다. 스크래치 디렉터리에 두지 않는다. 해당 화면의 데이터가 없으면 mock으로 상황을 만들어 캡처해도 된다.
 
-**Why:** 티켓 번호별로 모아 두어야 나중에 찾는다.
+브랜치에 티켓 번호가 없으면 어느 이름으로 둘지 묻는다.
+
+**Why:** 사용자가 바로 열어 확인하는 위치이고, 티켓 번호별로 모여 있어야 나중에 찾는다.
 
 ## [simple-git-guidance] git 명령 안내
 
 사용자가 직접 실행할 git 명령을 안내할 때 지킨다.
 
 - 가장 단순한 선택지를 먼저 주고, 이력 재작성은 두 번째 안으로 둔다. 손으로 파일을 옮기게 하지 않고 불가피하면 스크립트 하나로 준다
-- rebase, reset, fixup은 스크래치에 복제한 레포를 같은 상태(미커밋 변경, 미추적 파일, `user.email`과 `user.signingkey`까지)로 만들어 끝까지 실행해 보고, 커밋 diff와 작업 트리 상태를 확인한 뒤 안내한다
+- rebase, reset, fixup 같은 이력 재작성은 복제본에서 끝까지 실행해 본 뒤 안내한다. 복제 절차와 확인 항목은 참고 파일 `git-guidance.md`에 있다
 
 **Why:** 검증 없이 안내한 리베이스가 실패했고, 파일을 손으로 옮기는 단계에서 테스트 파일 이름이 뒤바뀌었다.
 ````
 
-- [ ] **Step 6: 프로젝트 파일 작성 (fez-front-ctrl-central)**
+- [ ] **Step 7: 프로젝트 파일 작성 (fez-front-ctrl-central)**
 
 `~/.claude/brownfield-navigator/orgs/pnpt/projects/fez-front-ctrl-central.md`
 
@@ -3113,7 +3142,7 @@ match-remotes:
 **Why:** `package.json`에 `@testing-library/*`와 `react-scripts test`가 있지만 실제로는 테스트를 쓰지 않는 레포다.
 ````
 
-- [ ] **Step 7: 프로젝트 파일 작성 (fez-front-taap)**
+- [ ] **Step 8: 프로젝트 파일 작성 (fez-front-taap)**
 
 `~/.claude/brownfield-navigator/orgs/pnpt/projects/fez-front-taap.md`
 
@@ -3138,7 +3167,7 @@ match-remotes:
 **Why:** 구현을 위한 임시 산출물이며 레포 히스토리에 남기지 않는 것이 이 레포의 원칙이다.
 ````
 
-- [ ] **Step 8: 프로젝트 파일 작성 (omar-front-ctrl-room)**
+- [ ] **Step 9: 프로젝트 파일 작성 (omar-front-ctrl-room)**
 
 `~/.claude/brownfield-navigator/orgs/pnpt/projects/omar-front-ctrl-room.md`
 
@@ -3171,7 +3200,7 @@ match-remotes:
 **Why:** 사용자가 `src/utils/sentry/meta.ts`, `report.ts`를 직접 정리해 준 형태가 기준이다.
 ````
 
-- [ ] **Step 9: 실제 레포 매칭 확인**
+- [ ] **Step 10: 실제 레포 매칭 확인**
 
 실행:
 
@@ -3201,7 +3230,7 @@ repositories | 주입 없음 | - | 경고 0
 src | - 조직: pnpt (근거: remote git@github.com:pnpt-ds/fez-front-taap) | - 프로젝트 파일: fez-front-taap | 경고 0
 ```
 
-- [ ] **Step 10: 교체 결과 확인**
+- [ ] **Step 11: 교체 결과 확인**
 
 실행: `bash plugins/brownfield-navigator/bin/compose-guide ~/repositories/fez-front-taap | grep -E '^## \[(tests|workflow-docs|comment-style|commit-by-user)\]'`
 기대:
@@ -3213,7 +3242,7 @@ src | - 조직: pnpt (근거: remote git@github.com:pnpt-ds/fez-front-taap) | - 
 ## [workflow-docs] 워크플로우 산출물 (프로젝트: fez-front-taap)
 ```
 
-- [ ] **Step 11: 세션 주입 길이 확인**
+- [ ] **Step 12: 세션 주입 길이 확인**
 
 Claude Code는 훅 출력을 10,000자로 제한한다. bran 프로필로 만든 가이드가 예산(9,000자) 안인지 확인한다.
 
